@@ -636,9 +636,9 @@ export class PlaywrightMCP {
         debugLog(`SEND: ${initializedMsg.trim()}`);
         this._proc?.stdin?.write(initializedMsg);
 
-        // Get initial tab count for cleanup
+        // Get initial tab count for cleanup (with timeout — CDP mode may hang on browser_tabs)
         debugLog('Fetching initial tabs count...');
-        page.tabs().then((tabs: any) => {
+        withTimeout(page.tabs(), 5000, 'Timed out fetching initial tabs').then((tabs: any) => {
           debugLog(`Tabs response: ${typeof tabs === 'string' ? tabs : JSON.stringify(tabs)}`);
           this._initialTabIdentities = extractTabIdentities(tabs);
           settleSuccess(page);

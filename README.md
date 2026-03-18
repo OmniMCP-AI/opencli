@@ -149,6 +149,7 @@ npm install -g @jackwener/opencli@latest
 | **v2ex** | `hot` `latest` `topic` `daily` `me` `notifications` | 6 | 🌐 / 🔐 |
 | **xueqiu** | `feed` `hot-stock` `hot` `search` `stock` `watchlist` | 6 | 🔐 Browser |
 | **xiaohongshu** | `search` `notifications` `feed` `me` `user` | 5 | 🔐 Browser |
+| **xiaoyuzhou** | `podcast` `podcast-episodes` `episode` | 3 | 🌐 Public |
 | **youtube** | `search` `video` `transcript` | 3 | 🔐 Browser |
 | **zhihu** | `hot` `search` `question` | 3 | 🔐 Browser |
 | **boss** | `search` `detail` | 2 | 🔐 Browser |

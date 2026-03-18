@@ -53,4 +53,39 @@ describe('public commands E2E', () => {
       expect(data).toBeDefined();
     }
   }, 30_000);
+
+  // ── xiaoyuzhou (Chinese site — may return empty on overseas CI runners) ──
+  it('xiaoyuzhou podcast returns podcast profile', async () => {
+    const { stdout, code } = await runCli(['xiaoyuzhou', 'podcast', '6013f9f58e2f7ee375cf4216', '-f', 'json']);
+    if (code !== 0) { console.warn('xiaoyuzhou podcast skipped (geo-blocked?)'); return; }
+    const data = parseJsonOutput(stdout);
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBe(1);
+    expect(data[0]).toHaveProperty('title');
+    expect(data[0]).toHaveProperty('subscribers');
+    expect(data[0]).toHaveProperty('episodes');
+  }, 30_000);
+
+  it('xiaoyuzhou podcast-episodes returns episode list', async () => {
+    const { stdout, code } = await runCli(['xiaoyuzhou', 'podcast-episodes', '6013f9f58e2f7ee375cf4216', '-f', 'json']);
+    if (code !== 0) { console.warn('xiaoyuzhou podcast-episodes skipped (geo-blocked?)'); return; }
+    const data = parseJsonOutput(stdout);
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBeGreaterThanOrEqual(1);
+    expect(data[0]).toHaveProperty('eid');
+    expect(data[0]).toHaveProperty('title');
+    expect(data[0]).toHaveProperty('duration');
+  }, 30_000);
+
+  it('xiaoyuzhou episode returns episode detail', async () => {
+    const { stdout, code } = await runCli(['xiaoyuzhou', 'episode', '69b3b675772ac2295bfc01d0', '-f', 'json']);
+    if (code !== 0) { console.warn('xiaoyuzhou episode skipped (geo-blocked?)'); return; }
+    const data = parseJsonOutput(stdout);
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBe(1);
+    expect(data[0]).toHaveProperty('title');
+    expect(data[0]).toHaveProperty('podcast');
+    expect(data[0]).toHaveProperty('plays');
+    expect(data[0]).toHaveProperty('comments');
+  }, 30_000);
 });

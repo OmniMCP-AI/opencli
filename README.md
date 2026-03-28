@@ -54,12 +54,6 @@ There are many great browser automation tools. Here's when opencli is the right 
 npm install -g @jackwener/opencli
 ```
 
-```bash
-opencli list                           # See all commands
-opencli hackernews top --limit 5       # Public API, no browser needed
-opencli bilibili hot --limit 5         # Browser command (requires Extension)
-```
-
 ### Install from source (for developers)
 
 ```bash
@@ -70,6 +64,14 @@ git clone git@github.com:jackwener/opencli.git && cd opencli && npm install && n
 
 ```bash
 opencli doctor                         # Check extension + daemon connectivity
+```
+
+**Try it out:**
+
+```bash
+opencli list                           # See all commands
+opencli hackernews top --limit 5       # Public API, no browser needed
+opencli bilibili hot --limit 5         # Browser command (requires Extension)
 ```
 
 ### Update
@@ -113,24 +115,19 @@ That's it! The daemon auto-starts when you run any browser command. No tokens, n
 
 65+ adapters in total — **[→ see all supported sites & commands](./docs/adapters/index.md)**
 
-### External CLI Hub
+## CLI Hub
 
-OpenCLI acts as a universal hub for your existing command-line tools. It provides unified discovery, automatic installation, and pure passthrough execution.
+OpenCLI acts as a universal hub for your existing command-line tools — unified discovery, auto-install, and pure passthrough execution.
 
-| External CLI | Description | Commands Example |
-|--------------|-------------|------------------|
+| External CLI | Description | Example |
+|--------------|-------------|---------|
 | **gh** | GitHub CLI | `opencli gh pr list --limit 5` |
 | **obsidian** | Obsidian vault management | `opencli obsidian search query="AI"` |
-| **docker** | Docker command-line interface | `opencli docker ps` |
-| **readwise** | Readwise & Reader CLI | `opencli readwise login` |
-| **gws** | Google Workspace CLI — Docs, Sheets, Drive, Gmail, Calendar | `opencli gws docs list` |
+| **docker** | Docker | `opencli docker ps` |
+| **gws** | Google Workspace CLI | `opencli gws docs list` |
 
-**Zero Configuration**: OpenCLI purely passes your inputs to the underlying binary via standard I/O streams. The external CLI works exactly as it naturally would, maintaining its standard output formats.
+**Register your own** — add any local CLI so AI agents can discover it via `opencli list`:
 
-**Auto-Installation**: If you run `opencli gh ...` and `gh` is not installed on your system, OpenCLI will automatically try to install it using your system's package manager (e.g., `brew install gh`) before seamlessly re-running the command.
-
-**Register Your Own**:
-Add any local CLI to your OpenCLI registry so AI agents can automatically discover it via the `opencli list` command.
 ```bash
 opencli register mycli
 ```
@@ -182,45 +179,19 @@ brew install yt-dlp
 ### Usage Examples
 
 ```bash
-# Download images/videos from Xiaohongshu note
 opencli xiaohongshu download abc123 --output ./xhs
-
-# Download Bilibili video (requires yt-dlp)
 opencli bilibili download BV1xxx --output ./bilibili
-opencli bilibili download BV1xxx --quality 1080p  # Specify quality
-
-# Download Twitter media from user
 opencli twitter download elonmusk --limit 20 --output ./twitter
-
-# Download single tweet media
-opencli twitter download --tweet-url "https://x.com/user/status/123" --output ./twitter
-
-# Download Douban posters / stills
-opencli douban download 30382501 --output ./douban
-
-# Export Zhihu article to Markdown
-opencli zhihu download "https://zhuanlan.zhihu.com/p/xxx" --output ./zhihu
-
-# Export with local images
-opencli zhihu download "https://zhuanlan.zhihu.com/p/xxx" --download-images
-
-# Export WeChat article to Markdown
-opencli weixin download --url "https://mp.weixin.qq.com/s/xxx" --output ./weixin
 ```
 
 
 
 ## Output Formats
 
-All built-in commands support `--format` / `-f` with `table`, `json`, `yaml`, `md`, and `csv`.
-The `list` command supports the same format options, and keeps `--json` for backward compatibility.
+All built-in commands support `--format` / `-f` with `table` (default), `json`, `yaml`, `md`, and `csv`.
 
 ```bash
-opencli list -f yaml            # Command registry as YAML
-opencli bilibili hot -f table   # Default: rich terminal table
 opencli bilibili hot -f json    # JSON (pipe to jq or LLMs)
-opencli bilibili hot -f yaml    # YAML (human-readable structured output)
-opencli bilibili hot -f md      # Markdown
 opencli bilibili hot -f csv     # CSV
 opencli bilibili hot -v         # Verbose: show pipeline debug steps
 ```

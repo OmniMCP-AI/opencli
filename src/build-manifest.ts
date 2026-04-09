@@ -5,8 +5,10 @@
  * Scans all YAML/TS CLI definitions and pre-compiles them into a single
  * manifest.json for instant cold-start registration (no runtime YAML parsing).
  *
- * Usage: npx tsx src/build-manifest.ts
- * Output: cli-manifest.json at the package root
+ * Usage:
+ *   - `npx tsx src/build-manifest.ts` during development
+ *   - `node dist/src/build-manifest.js` during packaging
+ * Output: cli-manifest.json next to the scanned clis/ tree
  */
 
 import * as fs from 'node:fs';
@@ -17,9 +19,35 @@ import { getErrorMessage } from './errors.js';
 import { fullName, getRegistry, type CliCommand } from './registry.js';
 import { findPackageRoot, getCliManifestPath } from './package-paths.js';
 
-const PACKAGE_ROOT = findPackageRoot(fileURLToPath(import.meta.url));
-const CLIS_DIR = path.join(PACKAGE_ROOT, 'clis');
-const OUTPUT = getCliManifestPath(CLIS_DIR);
+export interface ManifestBuildPaths {
+  packageRoot: string;
+  sourceClisDir: string;
+  scanClisDir: string;
+  output: string;
+  builtExecution: boolean;
+}
+
+export function resolveManifestBuildPaths(currentFile: string): ManifestBuildPaths {
+  const packageRoot = findPackageRoot(currentFile);
+  const sourceClisDir = path.join(packageRoot, 'clis');
+  const distClisDir = path.join(packageRoot, 'dist', 'clis');
+  const builtExecution = currentFile.replace(/\\/g, '/').includes('/dist/');
+  const scanClisDir = builtExecution && fs.existsSync(distClisDir) ? distClisDir : sourceClisDir;
+
+  return {
+    packageRoot,
+    sourceClisDir,
+    scanClisDir,
+    output: getCliManifestPath(scanClisDir),
+    builtExecution,
+  };
+}
+
+const BUILD_PATHS = resolveManifestBuildPaths(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = BUILD_PATHS.packageRoot;
+const SOURCE_CLIS_DIR = BUILD_PATHS.sourceClisDir;
+const CLIS_DIR = BUILD_PATHS.scanClisDir;
+const OUTPUT = BUILD_PATHS.output;
 
 export interface ManifestEntry {
   site: string;
@@ -46,9 +74,9 @@ export interface ManifestEntry {
   replacedBy?: string;
   /** 'yaml' or 'ts' — determines how executeCommand loads the handler */
   type: 'yaml' | 'ts';
-  /** Relative path from clis/ dir, e.g. 'bilibili/hot.yaml' or 'bilibili/search.js' */
+  /** Relative path from the runtime clis/ dir, e.g. 'bilibili/hot.yaml' or 'bilibili/search.js' */
   modulePath?: string;
-  /** Relative path to the original source file from clis/ dir (for YAML: 'site/cmd.yaml') */
+  /** Relative path to the original source file from the source clis/ dir (for YAML: 'site/cmd.yaml') */
   sourceFile?: string;
   /** Pre-navigation control — see CliCommand.navigateBefore */
   navigateBefore?: boolean | string;
@@ -73,9 +101,42 @@ function toManifestArgs(args: CliCommand['args']): ManifestEntry['args'] {
   }));
 }
 
+function toPosixRelative(fromDir: string, filePath: string): string {
+  return path.relative(fromDir, filePath).split(path.sep).join(path.posix.sep);
+}
+
+function isWithinDir(filePath: string, dir: string): boolean {
+  const relative = path.relative(dir, filePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function toTsModulePath(filePath: string, site: string): string {
-  const baseName = path.basename(filePath, path.extname(filePath));
-  return `${site}/${baseName}.js`;
+  if (!isWithinDir(filePath, CLIS_DIR)) {
+    const baseName = path.basename(filePath, path.extname(filePath));
+    return `${site}/${baseName}.js`;
+  }
+  const relativePath = toPosixRelative(CLIS_DIR, filePath);
+  return relativePath.replace(/\.[^.]+$/, '.js');
+}
+
+function toSourceFilePath(filePath: string): string {
+  if (!isWithinDir(filePath, CLIS_DIR)) {
+    return path.basename(filePath);
+  }
+  const relativePath = path.relative(CLIS_DIR, filePath);
+  const sourceCandidate = path.join(SOURCE_CLIS_DIR, relativePath);
+
+  if (fs.existsSync(sourceCandidate)) {
+    return toPosixRelative(SOURCE_CLIS_DIR, sourceCandidate);
+  }
+  if (filePath.endsWith('.js')) {
+    const tsCandidate = sourceCandidate.replace(/\.js$/, '.ts');
+    if (fs.existsSync(tsCandidate)) {
+      return toPosixRelative(SOURCE_CLIS_DIR, tsCandidate);
+    }
+  }
+
+  return relativePath.split(path.sep).join(path.posix.sep);
 }
 
 function isCliCommandValue(value: unknown, site: string): value is CliCommand {
@@ -137,7 +198,7 @@ function scanYaml(filePath: string, site: string): ManifestEntry | null {
       deprecated: (cliDef as Record<string, unknown>).deprecated as boolean | string | undefined,
       replacedBy: (cliDef as Record<string, unknown>).replacedBy as string | undefined,
       type: 'yaml',
-      sourceFile: path.relative(CLIS_DIR, filePath),
+      sourceFile: toSourceFilePath(filePath),
       navigateBefore: cliDef.navigateBefore,
     };
   } catch (err) {
@@ -184,7 +245,7 @@ export async function loadTsManifestEntries(
         return true;
       })
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(cmd => toManifestEntry(cmd, modulePath, path.relative(CLIS_DIR, filePath)));
+      .map(cmd => toManifestEntry(cmd, modulePath, toSourceFilePath(filePath)));
   } catch (err) {
     // If parsing fails, log a warning (matching scanYaml behaviour) and skip the entry.
     process.stderr.write(`Warning: failed to scan ${filePath}: ${getErrorMessage(err)}\n`);

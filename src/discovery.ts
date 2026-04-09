@@ -164,7 +164,9 @@ async function loadFromManifest(manifestPath: string, clisDir: string): Promise<
           columns: entry.columns,
           pipeline: entry.pipeline,
           timeoutSeconds: entry.timeout,
-          source: entry.sourceFile ? path.resolve(clisDir, entry.sourceFile) : `manifest:${entry.site}/${entry.name}`,
+          source: entry.sourceFile
+            ? resolveManifestSourcePath(clisDir, entry.sourceFile)
+            : `manifest:${entry.site}/${entry.name}`,
           deprecated: entry.deprecated,
           replacedBy: entry.replacedBy,
           navigateBefore: entry.navigateBefore,
@@ -186,7 +188,7 @@ async function loadFromManifest(manifestPath: string, clisDir: string): Promise<
           args: entry.args ?? [],
           columns: entry.columns,
           timeoutSeconds: entry.timeout,
-          source: entry.sourceFile ? path.resolve(clisDir, entry.sourceFile) : modulePath,
+          source: entry.sourceFile ? resolveManifestSourcePath(clisDir, entry.sourceFile) : modulePath,
           deprecated: entry.deprecated,
           replacedBy: entry.replacedBy,
           navigateBefore: entry.navigateBefore,
@@ -201,6 +203,20 @@ async function loadFromManifest(manifestPath: string, clisDir: string): Promise<
     log.warn(`Failed to load manifest ${manifestPath}: ${getErrorMessage(err)}`);
     return false;
   }
+}
+
+function resolveManifestSourcePath(clisDir: string, sourceFile: string): string {
+  const direct = path.resolve(clisDir, sourceFile);
+  if (fs.existsSync(direct)) return direct;
+
+  const normalizedClisDir = clisDir.replace(/\\/g, '/');
+  if (normalizedClisDir.endsWith('/dist/clis')) {
+    const packageRoot = path.resolve(clisDir, '..', '..');
+    const sourceCandidate = path.resolve(packageRoot, 'clis', sourceFile);
+    if (fs.existsSync(sourceCandidate)) return sourceCandidate;
+  }
+
+  return direct;
 }
 
 /**

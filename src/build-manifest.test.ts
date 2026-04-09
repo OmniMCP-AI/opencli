@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { cli, getRegistry, Strategy } from './registry.js';
-import { loadTsManifestEntries, shouldReplaceManifestEntry } from './build-manifest.js';
+import { loadTsManifestEntries, resolveManifestBuildPaths, shouldReplaceManifestEntry } from './build-manifest.js';
 
 describe('manifest helper rules', () => {
   const tempDirs: string[] = [];
@@ -58,6 +58,29 @@ describe('manifest helper rules', () => {
         type: 'yaml',
       },
     )).toBe(false);
+  });
+
+  it('writes built manifests next to dist/clis when running from dist/', () => {
+    const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-build-paths-'));
+    tempDirs.push(packageRoot);
+    fs.mkdirSync(path.join(packageRoot, 'dist', 'clis'), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, 'package.json'), '{}');
+
+    expect(resolveManifestBuildPaths(path.join(packageRoot, 'src', 'build-manifest.ts'))).toMatchObject({
+      packageRoot,
+      sourceClisDir: path.join(packageRoot, 'clis'),
+      scanClisDir: path.join(packageRoot, 'clis'),
+      output: path.join(packageRoot, 'cli-manifest.json'),
+      builtExecution: false,
+    });
+
+    expect(resolveManifestBuildPaths(path.join(packageRoot, 'dist', 'src', 'build-manifest.js'))).toMatchObject({
+      packageRoot,
+      sourceClisDir: path.join(packageRoot, 'clis'),
+      scanClisDir: path.join(packageRoot, 'dist', 'clis'),
+      output: path.join(packageRoot, 'dist', 'cli-manifest.json'),
+      builtExecution: true,
+    });
   });
 
   it('skips TS files that do not register a cli', () => {

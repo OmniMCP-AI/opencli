@@ -79,6 +79,46 @@ cli({
     }
   });
 
+  it('resolves manifest source files back to clis/ when loading dist manifests', async () => {
+    const tempBuildRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'opencli-manifest-source-'));
+    const distClisDir = path.join(tempBuildRoot, 'dist', 'clis');
+    const distSiteDir = path.join(distClisDir, 'manifest-site');
+    const sourceSiteDir = path.join(tempBuildRoot, 'clis', 'manifest-site');
+    const manifestPath = path.join(tempBuildRoot, 'dist', 'cli-manifest.json');
+    const sourcePath = path.join(sourceSiteDir, 'hello.ts');
+    const modulePath = path.join(distSiteDir, 'hello.js');
+
+    try {
+      await fs.promises.mkdir(distSiteDir, { recursive: true });
+      await fs.promises.mkdir(sourceSiteDir, { recursive: true });
+      await fs.promises.writeFile(sourcePath, 'export const source = true;\n');
+      await fs.promises.writeFile(modulePath, 'export const compiled = true;\n');
+      await fs.promises.writeFile(manifestPath, JSON.stringify([
+        {
+          site: 'manifest-site',
+          name: 'hello',
+          description: 'hello command',
+          strategy: 'public',
+          browser: false,
+          args: [],
+          type: 'ts',
+          modulePath: 'manifest-site/hello.js',
+          sourceFile: 'manifest-site/hello.ts',
+        },
+      ]));
+
+      await discoverClis(distClisDir);
+
+      const cmd = getRegistry().get('manifest-site/hello');
+      expect(cmd).toBeDefined();
+      expect(cmd!.source).toBe(sourcePath);
+      expect((cmd as any)._modulePath).toBe(modulePath);
+    } finally {
+      getRegistry().delete('manifest-site/hello');
+      await fs.promises.rm(tempBuildRoot, { recursive: true, force: true });
+    }
+  });
+
   it('loads user CLI modules via package exports symlink', async () => {
     const tempOpencliRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'opencli-user-clis-'));
     const userClisDir = path.join(tempOpencliRoot, 'clis');

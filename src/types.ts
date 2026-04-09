@@ -38,6 +38,28 @@ export interface ScreenshotOptions {
   path?: string;
 }
 
+export interface DownloadWaitOptions {
+  timeoutMs?: number;
+  startedAfterMs?: number;
+  urlPattern?: string;
+  referrerPattern?: string;
+}
+
+export interface BrowserDownloadResult {
+  downloadId?: number;
+  filename: string;
+  url?: string;
+  finalUrl?: string;
+  referrer?: string;
+  mime?: string;
+  state?: string;
+  startTime?: string;
+  endTime?: string;
+  fileSize?: number;
+  totalBytes?: number;
+  exists?: boolean;
+}
+
 export interface BrowserSessionInfo {
   workspace?: string;
   connected?: boolean;
@@ -86,6 +108,8 @@ export interface IPage {
   getActiveTabId?(): number | undefined;
   /** Send a raw CDP command via chrome.debugger passthrough. */
   cdp?(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  /** Wait for a browser download triggered by the active page and return the local file path. */
+  waitForDownload?(options?: DownloadWaitOptions): Promise<BrowserDownloadResult>;
   /** Click at native coordinates via CDP Input.dispatchMouseEvent. */
   nativeClick?(x: number, y: number): Promise<void>;
   /** Type text via CDP Input.insertText. */

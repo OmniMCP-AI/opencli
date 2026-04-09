@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import {
   ArgumentError,
   CommandExecutionError,
@@ -184,7 +185,7 @@ cli({
       help: 'Shopee product URL, e.g. https://shopee.sg/...-i.123.456',
     },
   ],
-  columns: ['status', 'message', 'product_url'],
+  columns: ['status', 'message', 'local_url', 'local_path', 'product_url'],
   func: async (page, args) => {
     if (!page) {
       throw new CommandExecutionError(
@@ -194,6 +195,12 @@ cli({
     }
 
     const productUrl = normalizeShopeeReviewUrl(args.url);
+    if (typeof page.waitForDownload !== 'function') {
+      throw new CommandExecutionError(
+        'Shopee review download requires browser download tracking support',
+        'Reload the browser bridge extension/plugin to a build that supports download-wait.',
+      );
+    }
 
     await page.goto(productUrl, { waitUntil: 'load' });
     await page.wait({ selector: EXPORT_REVIEW_BUTTON_SELECTOR, timeout: 15 });
@@ -218,12 +225,24 @@ cli({
     );
 
     await page.wait({ selector: CONFIRM_EXPORT_BUTTON_SELECTOR, timeout: 10 });
+    const downloadStartedAtMs = Date.now();
     await clickSelector(page, CONFIRM_EXPORT_BUTTON_SELECTOR, 'export confirm button');
     await waitForExportReviewReady(page);
 
+    const download = await page.waitForDownload({
+      startedAfterMs: downloadStartedAtMs,
+      timeoutMs: 30000,
+    });
+    const localPath = String(download?.filename ?? '').trim();
+    if (!localPath) {
+      throw new CommandExecutionError('Shopee review download finished without a local filename');
+    }
+
     return [{
       status: 'success',
-      message: 'Triggered Shopee review export with the recorded good-detail filter.',
+      message: 'Downloaded Shopee review export with the recorded good-detail filter.',
+      local_url: pathToFileURL(localPath).href,
+      local_path: localPath,
       product_url: productUrl,
     }];
   },

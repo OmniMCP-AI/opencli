@@ -10,7 +10,7 @@
  * chrome-extension:// tab that can't be debugged.
  */
 
-import type { BrowserCookie, ScreenshotOptions } from '../types.js';
+import type { BrowserCookie, BrowserDownloadResult, DownloadWaitOptions, ScreenshotOptions } from '../types.js';
 import { sendCommand } from './daemon-client.js';
 import { wrapForEval } from './utils.js';
 import { saveBase64ToFile } from '../utils.js';
@@ -199,6 +199,17 @@ export class Page extends BasePage {
       cdpParams: params,
       ...this._cmdOpts(),
     });
+  }
+
+  async waitForDownload(options: DownloadWaitOptions = {}): Promise<BrowserDownloadResult> {
+    const result = await sendCommand('download-wait', {
+      downloadTimeoutMs: options.timeoutMs,
+      downloadStartedAfterMs: options.startedAfterMs,
+      downloadUrlPattern: options.urlPattern,
+      downloadReferrerPattern: options.referrerPattern,
+      ...this._cmdOpts(),
+    });
+    return result as BrowserDownloadResult;
   }
 
   /** CDP native click fallback — called when JS el.click() fails */

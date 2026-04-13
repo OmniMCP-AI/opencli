@@ -2,9 +2,9 @@ import {
   CommandExecutionError,
   EmptyResultError,
 } from '@jackwener/opencli/errors';
+import { bindCurrentTab } from '@jackwener/opencli/browser/daemon-client';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
-import { bindCurrentTab } from '../../src/browser/daemon-client.js';
 import { clearLocalStorageForUrlHost, simulateHumanBehavior } from './shared.js';
 
 type ShopeeField = {

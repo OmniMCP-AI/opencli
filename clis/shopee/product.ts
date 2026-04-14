@@ -5,7 +5,7 @@ import {
 import { bindCurrentTab } from '@jackwener/opencli/browser/daemon-client';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
-import { clearLocalStorageForUrlHost, simulateHumanBehavior } from './shared.js';
+import { readShopdoraLoginState, simulateHumanBehavior } from './shared.js';
 
 type ShopeeField = {
   name: string;
@@ -213,6 +213,7 @@ const PRODUCT_FIELDS: ShopeeField[] = [
 
 const PRODUCT_COLUMNS = [
   'product_url',
+  'shopdora_login_message',
   ...PRODUCT_FIELDS.map((field) => field.name),
 ];
 
@@ -441,7 +442,9 @@ cli({
 
     const productUrl = args.url;
     await ensureShopeeProductPage(page, productUrl);
+    const shopdoraLoginState = await readShopdoraLoginState(page);
     const row = await extractProductDetails(page, productUrl);
+    row.shopdora_login_message = shopdoraLoginState.loginMessage;
 
     if (!hasMeaningfulProductData(row)) {
       throw new EmptyResultError(

@@ -7,7 +7,13 @@ import {
 import { bindCurrentTab } from '@jackwener/opencli/browser/daemon-client';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
-import { clearLocalStorageForUrlHost, simulateHumanBehavior, waitRandomDuration } from './shared.js';
+import {
+  appendShopdoraLoginMessage,
+  readShopdoraLoginState,
+  SHOPDORA_NOT_LOGGED_IN_MESSAGE,
+  simulateHumanBehavior,
+  waitRandomDuration,
+} from './shared.js';
 
 const EXPORT_REVIEW_BUTTON_SELECTOR =
   'div > div:nth-of-type(1) > div:nth-of-type(2) > div > div.common-btn.en_common-btn';
@@ -19,10 +25,16 @@ const SECONDARY_FILTER_LABEL_SELECTOR =
   'div:nth-of-type(1) > div:nth-of-type(2) > span:nth-of-type(2) > label > span.t-checkbox__input:nth-of-type(1)';
 const SECONDARY_FILTER_INPUT_SELECTOR =
   'div:nth-of-type(1) > div:nth-of-type(2) > span:nth-of-type(2) > label > input.t-checkbox__former';
+const TIME_PERIOD_START_INPUT_SELECTOR =
+  '.review .t-range-input__inner .t-range-input__inner-left .t-input__inner';
+const TIME_PERIOD_START_MONTH_OFFSET = -3;
+const TIME_PERIOD_START_DAY_OFFSET = 7;
 const CONFIRM_EXPORT_BUTTON_SELECTOR =
   '.review .button button:last-of-type';
 
 const SHOPEE_WORKSPACE = 'site:shopee';
+const EXPORT_DOWNLOAD_TIMEOUT_SECONDS = 300;
+const EXPORT_DOWNLOAD_TIMEOUT_MS = EXPORT_DOWNLOAD_TIMEOUT_SECONDS * 1000;
 
 type BindCurrentTabFn = (
   workspace: string,
@@ -108,6 +120,7 @@ function buildWaitForExportReviewReadyScript(timeoutMs: number, pollIntervalMs: 
       const timeout = ${timeoutMs};
       const pollInterval = ${pollIntervalMs};
       const selector = '.putButton .common-btn.en_common-btn';
+      const loginSelector = '.shopdoraLoginPage';
       const normalizeText = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
       const startedAt = Date.now();
       let lastKnownText = '';
@@ -140,6 +153,11 @@ function buildWaitForExportReviewReadyScript(timeoutMs: number, pollIntervalMs: 
       };
 
       const tick = () => {
+        if (document.querySelector(loginSelector)) {
+          resolve({ ok: false, reason: 'shopdora_login_required' });
+          return;
+        }
+
         const state = readButtonState();
         if (state.done) {
           resolve({ ok: true, text: state.text || 'Export Review' });
@@ -173,8 +191,148 @@ async function ensureCheckboxState(page: IPage, selector: string, checked: boole
   }
 }
 
-async function waitForExportReviewReady(page: IPage, timeoutMs = 30000, pollIntervalMs = 1000): Promise<void> {
-  await page.evaluate(buildWaitForExportReviewReadyScript(timeoutMs, pollIntervalMs));
+async function waitForExportReviewReady(
+  page: IPage,
+  timeoutMs = EXPORT_DOWNLOAD_TIMEOUT_MS,
+  pollIntervalMs = 1000,
+): Promise<void> {
+  const result = await page.evaluate(buildWaitForExportReviewReadyScript(timeoutMs, pollIntervalMs));
+  if (
+    result
+    && typeof result === 'object'
+    && (result as { ok?: boolean; reason?: string }).ok === false
+    && (result as { reason?: string }).reason === 'shopdora_login_required'
+  ) {
+    throw new CommandExecutionError(
+      'Shopee product-shopdora-download requires Shopdora login',
+      `${SHOPDORA_NOT_LOGGED_IN_MESSAGE}，请先登录 Shopdora 后重试。`,
+    );
+  }
+}
+
+function buildReadInputValueScript(selector: string): string {
+  return `
+    (() => {
+      const input = document.querySelector(${JSON.stringify(selector)});
+      if (!(input instanceof HTMLInputElement)) {
+        return { ok: false, error: 'date_input_not_found' };
+      }
+
+      return { ok: true, value: input.value };
+    })()
+  `;
+}
+
+function buildDispatchEnterOnInputScript(selector: string): string {
+  return `
+    (() => {
+      const input = document.querySelector(${JSON.stringify(selector)});
+      if (!(input instanceof HTMLInputElement)) {
+        return { ok: false, error: 'date_input_not_found' };
+      }
+
+      input.focus();
+      const eventInit = {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      };
+      input.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+      input.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+      input.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true };
+    })()
+  `;
+}
+
+function computeShiftedDateFromInputValue(
+  value: string,
+  monthOffset = TIME_PERIOD_START_MONTH_OFFSET,
+  dayOffset = TIME_PERIOD_START_DAY_OFFSET,
+): string {
+  const normalized = String(value ?? '').trim();
+  const match = normalized.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\D.*)?$/);
+  if (!match) {
+    throw new CommandExecutionError(
+      'Shopee product-shopdora-download could not parse the time-period start date',
+      `Unsupported input value: ${normalized || '(empty)'}`,
+    );
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const monthIndex = Number.parseInt(match[2], 10) - 1;
+  const day = Number.parseInt(match[3], 10);
+  const target = new Date(Date.UTC(year, monthIndex, day));
+  if (
+    Number.isNaN(target.getTime())
+    || target.getUTCFullYear() !== year
+    || target.getUTCMonth() !== monthIndex
+    || target.getUTCDate() !== day
+  ) {
+    throw new CommandExecutionError(
+      'Shopee product-shopdora-download could not parse the time-period start date',
+      `Invalid input value: ${normalized}`,
+    );
+  }
+
+  const originalDay = target.getUTCDate();
+  target.setUTCDate(1);
+  target.setUTCMonth(target.getUTCMonth() + monthOffset);
+  const daysInMonth = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(originalDay, daysInMonth));
+  target.setUTCDate(target.getUTCDate() + dayOffset);
+
+  const yyyy = target.getUTCFullYear();
+  const mm = String(target.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(target.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function setComputedTimePeriodStartValue(page: IPage): Promise<string> {
+  await clickSelector(page, TIME_PERIOD_START_INPUT_SELECTOR, 'time-period start input');
+  await waitRandomDuration(page, [300, 900]);
+
+  const inputState = await page.evaluate(buildReadInputValueScript(TIME_PERIOD_START_INPUT_SELECTOR));
+  if (!inputState || typeof inputState !== 'object' || !(inputState as { ok?: boolean }).ok) {
+    throw new CommandExecutionError('Shopee product-shopdora-download could not read the time-period start date');
+  }
+
+  const nextValue = computeShiftedDateFromInputValue(String((inputState as { value?: unknown }).value ?? ''));
+
+  try {
+    await page.typeText(TIME_PERIOD_START_INPUT_SELECTOR, nextValue);
+  } catch (error) {
+    throw new CommandExecutionError(
+      'Shopee product-shopdora-download could not set the time-period start date',
+      getErrorMessage(error),
+    );
+  }
+
+  await waitRandomDuration(page, [200, 700]);
+
+  const enterDispatchResult = await page.evaluate(buildDispatchEnterOnInputScript(TIME_PERIOD_START_INPUT_SELECTOR));
+  if (!enterDispatchResult || typeof enterDispatchResult !== 'object' || !(enterDispatchResult as { ok?: boolean }).ok) {
+    throw new CommandExecutionError('Shopee product-shopdora-download could not trigger Enter on the time-period start date');
+  }
+
+  try {
+    if (typeof page.nativeKeyPress === 'function') {
+      await page.nativeKeyPress('Enter');
+    } else {
+      await page.pressKey('Enter');
+    }
+  } catch (error) {
+    throw new CommandExecutionError(
+      'Shopee product-shopdora-download could not submit the time-period start date',
+      getErrorMessage(error),
+    );
+  }
+
+  return nextValue;
 }
 
 async function clickSelector(page: IPage, selector: string, label: string): Promise<void> {
@@ -224,6 +382,7 @@ cli({
   domain: 'shopee.sg',
   strategy: Strategy.COOKIE,
   navigateBefore: false,
+  timeoutSeconds: EXPORT_DOWNLOAD_TIMEOUT_SECONDS,
   args: [
     {
       name: 'url',
@@ -232,7 +391,7 @@ cli({
       help: 'Shopee product URL, e.g. https://shopee.sg/...-i.123.456',
     },
   ],
-  columns: ['status', 'message', 'local_url', 'local_path', 'product_url'],
+  columns: ['status', 'message', 'local_url', 'local_path', 'product_url', 'shopdora_login_message'],
   func: async (page, args) => {
     if (!page) {
       throw new CommandExecutionError(
@@ -250,6 +409,7 @@ cli({
     }
 
     await ensureShopeeProductPage(page, productUrl);
+    const initialShopdoraLoginState = await readShopdoraLoginState(page);
     await page.wait({ selector: EXPORT_REVIEW_BUTTON_SELECTOR, timeout: 15 });
     await simulateHumanBehavior(page, {
       selector: EXPORT_REVIEW_BUTTON_SELECTOR,
@@ -262,13 +422,29 @@ cli({
     await clickSelector(page, EXPORT_REVIEW_BUTTON_SELECTOR, 'Export Review');
     await waitRandomDuration(page, [2000, 6000]);
 
-    await applyCheckboxStep(
-      page,
-      SECONDARY_FILTER_LABEL_SELECTOR,
-      SECONDARY_FILTER_INPUT_SELECTOR,
-      false,
-      'secondary filter',
-    );
+    const postExportShopdoraLoginState = await readShopdoraLoginState(page);
+    if (postExportShopdoraLoginState.hasShopdoraLoginPage) {
+      return [{
+        status: 'not_logged_in',
+        message: `${SHOPDORA_NOT_LOGGED_IN_MESSAGE}，请先登录 Shopdora 后重试。`,
+        local_url: '',
+        local_path: '',
+        product_url: productUrl,
+        shopdora_login_message: postExportShopdoraLoginState.loginMessage,
+      }];
+    }
+    const shopdoraLoginMessage =
+      postExportShopdoraLoginState.loginMessage || initialShopdoraLoginState.loginMessage;
+
+    await page.wait({ selector: TIME_PERIOD_START_INPUT_SELECTOR, timeout: 10 });
+    await simulateHumanBehavior(page, {
+      selector: TIME_PERIOD_START_INPUT_SELECTOR,
+      scrollRangePx: [20, 80],
+      preWaitRangeMs: [250, 600],
+      postWaitRangeMs: [150, 400],
+    });
+    await setComputedTimePeriodStartValue(page);
+    await waitRandomDuration(page, [1000, 2500]);
 
     const appliedDetailFilter = await applyCheckboxStep(
       page,
@@ -292,7 +468,7 @@ cli({
 
     const download = await page.waitForDownload({
       startedAfterMs: downloadStartedAtMs,
-      timeoutMs: 30000,
+      timeoutMs: EXPORT_DOWNLOAD_TIMEOUT_MS,
     });
     const localPath = String(download?.filename ?? '').trim();
     if (!localPath) {
@@ -301,12 +477,16 @@ cli({
 
     return [{
       status: 'success',
-      message: appliedDetailFilter
-        ? 'Downloaded Shopee product Shopdora export with the recorded good-detail filter.'
-        : 'Downloaded Shopee product Shopdora export after skipping the unavailable detail filter.',
+      message: appendShopdoraLoginMessage(
+        appliedDetailFilter
+          ? 'Downloaded Shopee product Shopdora export with the recorded good-detail filter.'
+          : 'Downloaded Shopee product Shopdora export after skipping the unavailable detail filter.',
+        shopdoraLoginMessage,
+      ),
       local_url: pathToFileURL(localPath).href,
       local_path: localPath,
       product_url: productUrl,
+      shopdora_login_message: shopdoraLoginMessage,
     }];
   },
 });
@@ -317,10 +497,17 @@ export const __test__ = {
   DETAIL_FILTER_INPUT_SELECTOR,
   SECONDARY_FILTER_LABEL_SELECTOR,
   SECONDARY_FILTER_INPUT_SELECTOR,
+  TIME_PERIOD_START_INPUT_SELECTOR,
+  TIME_PERIOD_START_MONTH_OFFSET,
+  TIME_PERIOD_START_DAY_OFFSET,
   CONFIRM_EXPORT_BUTTON_SELECTOR,
   normalizeShopeeReviewUrl,
   bindShopeeProductTab,
   ensureShopeeProductPage,
   buildEnsureCheckboxStateScript,
+  buildReadInputValueScript,
+  buildDispatchEnterOnInputScript,
+  computeShiftedDateFromInputValue,
   buildWaitForExportReviewReadyScript,
+  setComputedTimePeriodStartValue,
 };

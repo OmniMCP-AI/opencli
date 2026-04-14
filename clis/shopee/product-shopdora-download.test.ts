@@ -8,12 +8,19 @@ const {
   EXPORT_REVIEW_BUTTON_SELECTOR,
   DETAIL_FILTER_INPUT_SELECTOR,
   SECONDARY_FILTER_INPUT_SELECTOR,
+  TIME_PERIOD_START_INPUT_SELECTOR,
+  TIME_PERIOD_START_MONTH_OFFSET,
+  TIME_PERIOD_START_DAY_OFFSET,
   CONFIRM_EXPORT_BUTTON_SELECTOR,
   normalizeShopeeReviewUrl,
   bindShopeeProductTab,
   ensureShopeeProductPage,
   buildEnsureCheckboxStateScript,
+  buildReadInputValueScript,
+  buildDispatchEnterOnInputScript,
+  computeShiftedDateFromInputValue,
   buildWaitForExportReviewReadyScript,
+  setComputedTimePeriodStartValue,
 } =
   await import('./product-shopdora-download.js').then((m) => (m as typeof import('./product-shopdora-download.js')).__test__);
 
@@ -27,7 +34,8 @@ describe('shopee product-shopdora-download adapter', () => {
     expect(command!.domain).toBe('shopee.sg');
     expect(command!.strategy).toBe('cookie');
     expect(command!.navigateBefore).toBe(false);
-    expect(command!.columns).toEqual(['status', 'message', 'local_url', 'local_path', 'product_url']);
+    expect(command!.timeoutSeconds).toBe(300);
+    expect(command!.columns).toEqual(['status', 'message', 'local_url', 'local_path', 'product_url', 'shopdora_login_message']);
     expect(typeof command!.func).toBe('function');
   });
 
@@ -47,8 +55,48 @@ describe('shopee product-shopdora-download adapter', () => {
   it('builds DOM scripts around the recorded export workflow', () => {
     expect(buildEnsureCheckboxStateScript(DETAIL_FILTER_INPUT_SELECTOR, true)).toContain(DETAIL_FILTER_INPUT_SELECTOR);
     expect(buildEnsureCheckboxStateScript(SECONDARY_FILTER_INPUT_SELECTOR, false)).toContain('checkbox_not_found');
-    expect(buildWaitForExportReviewReadyScript(30000, 1000)).toContain('.putButton .common-btn.en_common-btn');
-    expect(buildWaitForExportReviewReadyScript(30000, 1000)).toContain('Export Review');
+    expect(TIME_PERIOD_START_INPUT_SELECTOR).toContain('.t-range-input__inner-left .t-input__inner');
+    expect(TIME_PERIOD_START_MONTH_OFFSET).toBe(-3);
+    expect(TIME_PERIOD_START_DAY_OFFSET).toBe(7);
+    expect(buildReadInputValueScript(TIME_PERIOD_START_INPUT_SELECTOR)).toContain(TIME_PERIOD_START_INPUT_SELECTOR);
+    expect(buildDispatchEnterOnInputScript(TIME_PERIOD_START_INPUT_SELECTOR)).toContain("new KeyboardEvent('keydown'");
+    expect(buildDispatchEnterOnInputScript(TIME_PERIOD_START_INPUT_SELECTOR)).toContain("new KeyboardEvent('keypress'");
+    expect(buildDispatchEnterOnInputScript(TIME_PERIOD_START_INPUT_SELECTOR)).toContain("new KeyboardEvent('keyup'");
+    expect(buildWaitForExportReviewReadyScript(300000, 1000)).toContain('.putButton .common-btn.en_common-btn');
+    expect(buildWaitForExportReviewReadyScript(300000, 1000)).toContain('.shopdoraLoginPage');
+    expect(buildWaitForExportReviewReadyScript(300000, 1000)).toContain('Export Review');
+  });
+
+  it('computes the date from the input value using -3 months + 7 days', () => {
+    expect(computeShiftedDateFromInputValue('2026-04-14')).toBe('2026-01-21');
+    expect(computeShiftedDateFromInputValue('2026/05/31')).toBe('2026-03-07');
+    expect(() => computeShiftedDateFromInputValue('not-a-date')).toThrow(
+      'Shopee product-shopdora-download could not parse the time-period start date',
+    );
+  });
+
+  it('clicks, computes from the current input value, types the result, and presses Enter', async () => {
+    const click = vi.fn<NonNullable<IPage['click']>>().mockResolvedValue(undefined);
+    const typeText = vi.fn<NonNullable<IPage['typeText']>>().mockResolvedValue(undefined);
+    const pressKey = vi.fn<NonNullable<IPage['pressKey']>>().mockResolvedValue(undefined);
+    const nativeKeyPress = vi.fn<NonNullable<NonNullable<IPage['nativeKeyPress']>>>().mockResolvedValue(undefined);
+    const wait = vi.fn<NonNullable<IPage['wait']>>().mockResolvedValue(undefined);
+    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>()
+      .mockResolvedValueOnce({ ok: true, value: '2026-04-14' })
+      .mockResolvedValueOnce({ ok: true });
+    const page = { click, typeText, pressKey, nativeKeyPress, wait, evaluate } as unknown as IPage;
+
+    await expect(
+      setComputedTimePeriodStartValue(page),
+    ).resolves.toBe('2026-01-21');
+
+    expect(click).toHaveBeenCalledWith(TIME_PERIOD_START_INPUT_SELECTOR);
+    expect(evaluate).toHaveBeenCalledWith(expect.stringContaining(TIME_PERIOD_START_INPUT_SELECTOR));
+    expect(typeText).toHaveBeenCalledWith(TIME_PERIOD_START_INPUT_SELECTOR, '2026-01-21');
+    expect(evaluate).toHaveBeenCalledWith(expect.stringContaining("new KeyboardEvent('keydown'"));
+    expect(nativeKeyPress).toHaveBeenCalledWith('Enter');
+    expect(pressKey).not.toHaveBeenCalled();
+    expect(wait).toHaveBeenCalled();
   });
 
   it('binds to the matching existing browser tab using the shopee workspace', async () => {
@@ -86,14 +134,29 @@ describe('shopee product-shopdora-download adapter', () => {
     const goto = vi.fn<NonNullable<IPage['goto']>>().mockResolvedValue(undefined);
     const wait = vi.fn<NonNullable<IPage['wait']>>().mockResolvedValue(undefined);
     const click = vi.fn<NonNullable<IPage['click']>>().mockResolvedValue(undefined);
+    const typeText = vi.fn<NonNullable<IPage['typeText']>>().mockResolvedValue(undefined);
+    const pressKey = vi.fn<NonNullable<IPage['pressKey']>>().mockResolvedValue(undefined);
     const scroll = vi.fn<NonNullable<IPage['scroll']>>().mockResolvedValue(undefined);
-    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>()
-      .mockResolvedValueOnce({ ok: true, host: 'shopee.sg' })
-      .mockResolvedValue({ ok: true, text: 'Export Review' });
+    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('.shopdoraLoginPage') && source.includes('.pageDetailLoginTitle') && !source.includes('.putButton .common-btn.en_common-btn')) {
+        return { hasShopdoraLoginPage: false, hasPageDetailLoginTitle: false };
+      }
+      if (source.includes("new KeyboardEvent('keydown'")) {
+        return { ok: true };
+      }
+      if (source.includes(TIME_PERIOD_START_INPUT_SELECTOR)) {
+        return { ok: true, value: '2026-04-14' };
+      }
+      if (source.includes('.putButton .common-btn.en_common-btn')) {
+        return { ok: true, text: 'Export Review' };
+      }
+      return { ok: true };
+    });
     const waitForDownload = vi.fn<NonNullable<NonNullable<IPage['waitForDownload']>>>()
       .mockResolvedValue({ filename: downloadedFile });
 
-    const page = { goto, wait, click, scroll, evaluate, waitForDownload } as unknown as IPage;
+    const page = { goto, wait, click, typeText, pressKey, scroll, evaluate, waitForDownload } as unknown as IPage;
 
     const result = await command!.func!(page, {
       url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
@@ -107,16 +170,19 @@ describe('shopee product-shopdora-download adapter', () => {
     );
     expect(wait).toHaveBeenCalledWith({ selector: EXPORT_REVIEW_BUTTON_SELECTOR, timeout: 15 });
     expect(click).toHaveBeenCalledWith(EXPORT_REVIEW_BUTTON_SELECTOR);
+    expect(click).toHaveBeenCalledWith(TIME_PERIOD_START_INPUT_SELECTOR);
     expect(click).toHaveBeenCalledWith(CONFIRM_EXPORT_BUTTON_SELECTOR);
+    expect(typeText).toHaveBeenCalledWith(TIME_PERIOD_START_INPUT_SELECTOR, '2026-01-21');
+    expect(pressKey).toHaveBeenCalledWith('Enter');
     expect(scroll).toHaveBeenCalled();
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining(EXPORT_REVIEW_BUTTON_SELECTOR));
+    expect(wait).toHaveBeenCalledWith({ selector: TIME_PERIOD_START_INPUT_SELECTOR, timeout: 10 });
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining(DETAIL_FILTER_INPUT_SELECTOR));
-    expect(evaluate).toHaveBeenCalledWith(expect.stringContaining(SECONDARY_FILTER_INPUT_SELECTOR));
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining(CONFIRM_EXPORT_BUTTON_SELECTOR));
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining('.putButton .common-btn.en_common-btn'));
     expect(waitForDownload).toHaveBeenCalledWith({
       startedAfterMs: expect.any(Number),
-      timeoutMs: 30000,
+      timeoutMs: 300000,
     });
     expect(result).toEqual([{
       status: 'success',
@@ -124,6 +190,7 @@ describe('shopee product-shopdora-download adapter', () => {
       local_url: pathToFileURL(downloadedFile).href,
       local_path: downloadedFile,
       product_url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+      shopdora_login_message: '',
     }]);
   });
 
@@ -141,14 +208,29 @@ describe('shopee product-shopdora-download adapter', () => {
       }
     });
     const click = vi.fn<NonNullable<IPage['click']>>().mockResolvedValue(undefined);
+    const typeText = vi.fn<NonNullable<IPage['typeText']>>().mockResolvedValue(undefined);
+    const pressKey = vi.fn<NonNullable<IPage['pressKey']>>().mockResolvedValue(undefined);
     const scroll = vi.fn<NonNullable<IPage['scroll']>>().mockResolvedValue(undefined);
-    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>()
-      .mockResolvedValueOnce({ ok: true, host: 'shopee.sg' })
-      .mockResolvedValue({ ok: true, text: 'Export Review' });
+    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('.shopdoraLoginPage') && source.includes('.pageDetailLoginTitle') && !source.includes('.putButton .common-btn.en_common-btn')) {
+        return { hasShopdoraLoginPage: false, hasPageDetailLoginTitle: false };
+      }
+      if (source.includes("new KeyboardEvent('keydown'")) {
+        return { ok: true };
+      }
+      if (source.includes(TIME_PERIOD_START_INPUT_SELECTOR)) {
+        return { ok: true, value: '2026-04-14' };
+      }
+      if (source.includes('.putButton .common-btn.en_common-btn')) {
+        return { ok: true, text: 'Export Review' };
+      }
+      return { ok: true };
+    });
     const waitForDownload = vi.fn<NonNullable<NonNullable<IPage['waitForDownload']>>>()
       .mockResolvedValue({ filename: downloadedFile });
 
-    const page = { goto, wait, click, scroll, evaluate, waitForDownload } as unknown as IPage;
+    const page = { goto, wait, click, typeText, pressKey, scroll, evaluate, waitForDownload } as unknown as IPage;
 
     const result = await command!.func!(page, {
       url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
@@ -157,7 +239,7 @@ describe('shopee product-shopdora-download adapter', () => {
     expect(click).toHaveBeenCalledWith(CONFIRM_EXPORT_BUTTON_SELECTOR);
     expect(waitForDownload).toHaveBeenCalledWith({
       startedAfterMs: expect.any(Number),
-      timeoutMs: 30000,
+      timeoutMs: 300000,
     });
     expect(result).toEqual([{
       status: 'success',
@@ -165,7 +247,88 @@ describe('shopee product-shopdora-download adapter', () => {
       local_url: pathToFileURL(downloadedFile).href,
       local_path: downloadedFile,
       product_url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+      shopdora_login_message: '',
     }]);
+  });
+
+  it('appends the Shopdora login message when the soft login title is present on the page', async () => {
+    const downloadedFile = '/tmp/opencli-shopee-product-shopdora-download-test/reviews-soft-login.csv';
+    const goto = vi.fn<NonNullable<IPage['goto']>>().mockResolvedValue(undefined);
+    const wait = vi.fn<NonNullable<IPage['wait']>>().mockResolvedValue(undefined);
+    const click = vi.fn<NonNullable<IPage['click']>>().mockResolvedValue(undefined);
+    const typeText = vi.fn<NonNullable<IPage['typeText']>>().mockResolvedValue(undefined);
+    const pressKey = vi.fn<NonNullable<IPage['pressKey']>>().mockResolvedValue(undefined);
+    const scroll = vi.fn<NonNullable<IPage['scroll']>>().mockResolvedValue(undefined);
+    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('.shopdoraLoginPage') && source.includes('.pageDetailLoginTitle') && !source.includes('.putButton .common-btn.en_common-btn')) {
+        return { hasShopdoraLoginPage: false, hasPageDetailLoginTitle: true };
+      }
+      if (source.includes("new KeyboardEvent('keydown'")) {
+        return { ok: true };
+      }
+      if (source.includes(TIME_PERIOD_START_INPUT_SELECTOR)) {
+        return { ok: true, value: '2026-04-14' };
+      }
+      if (source.includes('.putButton .common-btn.en_common-btn')) {
+        return { ok: true, text: 'Export Review' };
+      }
+      return { ok: true };
+    });
+    const waitForDownload = vi.fn<NonNullable<NonNullable<IPage['waitForDownload']>>>()
+      .mockResolvedValue({ filename: downloadedFile });
+    const page = { goto, wait, click, typeText, pressKey, scroll, evaluate, waitForDownload } as unknown as IPage;
+
+    const result = await command!.func!(page, {
+      url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+    });
+
+    expect(result).toEqual([{
+      status: 'success',
+      message: 'Downloaded Shopee product Shopdora export with the recorded good-detail filter. Shopdora 未登录。',
+      local_url: pathToFileURL(downloadedFile).href,
+      local_path: downloadedFile,
+      product_url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+      shopdora_login_message: 'Shopdora 未登录',
+    }]);
+  });
+
+  it('returns the login info immediately when export opens the Shopdora login page', async () => {
+    const goto = vi.fn<NonNullable<IPage['goto']>>().mockResolvedValue(undefined);
+    const wait = vi.fn<NonNullable<IPage['wait']>>().mockResolvedValue(undefined);
+    const click = vi.fn<NonNullable<IPage['click']>>().mockResolvedValue(undefined);
+    const typeText = vi.fn<NonNullable<IPage['typeText']>>().mockResolvedValue(undefined);
+    const pressKey = vi.fn<NonNullable<IPage['pressKey']>>().mockResolvedValue(undefined);
+    const scroll = vi.fn<NonNullable<IPage['scroll']>>().mockResolvedValue(undefined);
+    let loginCheckCount = 0;
+    const evaluate = vi.fn<NonNullable<IPage['evaluate']>>().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('.shopdoraLoginPage') && source.includes('.pageDetailLoginTitle') && !source.includes('.putButton .common-btn.en_common-btn')) {
+        loginCheckCount += 1;
+        return loginCheckCount === 1
+          ? { hasShopdoraLoginPage: false, hasPageDetailLoginTitle: false }
+          : { hasShopdoraLoginPage: true, hasPageDetailLoginTitle: false };
+      }
+      return { ok: true };
+    });
+    const waitForDownload = vi.fn<NonNullable<NonNullable<IPage['waitForDownload']>>>()
+      .mockResolvedValue({ filename: '/tmp/should-not-download.csv' });
+    const page = { goto, wait, click, typeText, pressKey, scroll, evaluate, waitForDownload } as unknown as IPage;
+
+    await expect(command!.func!(page, {
+      url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+    })).resolves.toEqual([{
+      status: 'not_logged_in',
+      message: 'Shopdora 未登录，请先登录 Shopdora 后重试。',
+      local_url: '',
+      local_path: '',
+      product_url: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+      shopdora_login_message: 'Shopdora 未登录',
+    }]);
+
+    expect(wait).not.toHaveBeenCalledWith({ selector: TIME_PERIOD_START_INPUT_SELECTOR, timeout: 10 });
+    expect(typeText).not.toHaveBeenCalled();
+    expect(waitForDownload).not.toHaveBeenCalled();
   });
 
   it('falls back to clearing the target host and reopening the product page when no existing product tab is found', async () => {

@@ -40,15 +40,15 @@ type AppPolicy = {
 };
 
 const APP_POLICIES: Record<string, AppPolicy> = {
-  'replica-listing-image': { defaultEngine: 'google/gemini-3-pro-image-preview' },
-  'pattern-extraction': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview', background: ' ' }, lockedFields: ['engine'] },
-  'pattern-fission': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview', background: ' ' }, lockedFields: ['engine'] },
-  'scene-fission': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview' }, lockedFields: ['engine'] },
-  '3d-from-2d': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview' }, lockedFields: ['engine'] },
-  'product-modification': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview' }, lockedFields: ['engine'] },
+  'replica-listing-image': { defaultEngine: 'google/gemini-3.1-flash-image-preview' },
+  'pattern-extraction': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview', background: ' ' }, lockedFields: ['engine'] },
+  'pattern-fission': { platformDefaults: false, fixedDefaults: { engine: 'ggoogle/gemini-3.1-flash-image-preview', background: ' ' }, lockedFields: ['engine'] },
+  'scene-fission': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview' }, lockedFields: ['engine'] },
+  '3d-from-2d': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview' }, lockedFields: ['engine'] },
+  'product-modification': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit' }, lockedFields: ['engine'] },
   'change-color': { platformDefaults: false },
-  'remove-background': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview', background: ' ' }, lockedFields: ['engine'] },
-  'remove-watermark': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3-pro-image-preview' }, lockedFields: ['engine'] },
+  'remove-background': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit', background: ' ' }, lockedFields: ['engine'] },
+  'remove-watermark': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit' }, lockedFields: ['engine'] },
   'remove-face': { platformDefaults: false },
 };
 

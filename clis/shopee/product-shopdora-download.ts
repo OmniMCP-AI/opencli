@@ -12,6 +12,7 @@ import {
   readShopdoraLoginState,
   SHOPDORA_NOT_LOGGED_IN_MESSAGE,
   simulateHumanBehavior,
+  simulatePointerAway,
   waitRandomDuration,
 } from './shared.js';
 
@@ -38,6 +39,13 @@ const CONFIRM_EXPORT_BUTTON_SELECTOR =
 const SHOPEE_WORKSPACE = 'site:shopee';
 const EXPORT_DOWNLOAD_TIMEOUT_SECONDS = 600;
 const EXPORT_DOWNLOAD_TIMEOUT_MS = EXPORT_DOWNLOAD_TIMEOUT_SECONDS * 1000;
+const EXPORT_REVIEW_PRE_HOVER_WAIT_SECONDS = 3;
+const EXPORT_REVIEW_PRE_HOVER_SCROLL_DOWN_PX = 320;
+const EXPORT_REVIEW_PRE_HOVER_SCROLL_UP_PX = 260;
+const EXPORT_REVIEW_PRE_HOVER_SCROLL_SEGMENT_PX = 40;
+const EXPORT_REVIEW_PRE_HOVER_SCROLL_MIN_STEPS = 6;
+const EXPORT_REVIEW_PRE_HOVER_SCROLL_MIN_DURATION_MS = 2200;
+const TIME_PERIOD_STEP_WAIT_SECONDS = 1;
 
 type BindCurrentTabFn = (
   workspace: string,
@@ -208,6 +216,34 @@ async function ensureShopeeProductPage(
   // await clearLocalStorageForUrlHost(page, productUrl);
   await page.goto(productUrl, { waitUntil: 'load' });
   return reusedExistingTab;
+}
+
+async function smoothScroll(
+  page: IPage,
+  direction: 'up' | 'down',
+  totalPixels: number,
+  options: {
+    segmentPixels?: number;
+    minSteps?: number;
+    minDurationMs?: number;
+  } = {},
+): Promise<void> {
+  const total = Math.max(0, Math.round(totalPixels));
+  if (total <= 0) return;
+
+  const segmentPixels = Math.max(1, Math.round(options.segmentPixels ?? EXPORT_REVIEW_PRE_HOVER_SCROLL_SEGMENT_PX));
+  const minSteps = Math.max(1, Math.round(options.minSteps ?? EXPORT_REVIEW_PRE_HOVER_SCROLL_MIN_STEPS));
+  const minDurationMs = Math.max(0, Math.round(options.minDurationMs ?? EXPORT_REVIEW_PRE_HOVER_SCROLL_MIN_DURATION_MS));
+  const stepCount = Math.max(minSteps, Math.ceil(total / segmentPixels));
+  const baseStepPixels = Math.floor(total / stepCount);
+  const remainder = total - (baseStepPixels * stepCount);
+  const secondsPerStep = Math.max(0.05, Number((minDurationMs / stepCount / 1000).toFixed(3)));
+
+  for (let index = 0; index < stepCount; index += 1) {
+    const stepPixels = baseStepPixels + (index < remainder ? 1 : 0);
+    await page.scroll(direction, stepPixels);
+    await page.wait({ time: secondsPerStep });
+  }
 }
 
 function buildWaitForExportReviewReadyScript(timeoutMs: number, pollIntervalMs: number): string {
@@ -391,12 +427,13 @@ function computeShiftedDateFromInputValue(
 async function setComputedTimePeriodStartValue(page: IPage): Promise<string> {
   const inputSelector = await resolveTargetSelector(page, 'time-period-start-input', 'time-period start input');
   await clickSelector(page, inputSelector, 'time-period start input');
-  await waitRandomDuration(page, [300, 900]);
+  await page.wait({ time: TIME_PERIOD_STEP_WAIT_SECONDS });
 
   const inputState = await page.evaluate(buildReadInputValueScript(inputSelector));
   if (!inputState || typeof inputState !== 'object' || !(inputState as { ok?: boolean }).ok) {
     throw new CommandExecutionError('Shopee product-shopdora-download could not read the time-period start date');
   }
+  await page.wait({ time: TIME_PERIOD_STEP_WAIT_SECONDS });
 
   const nextValue = computeShiftedDateFromInputValue(String((inputState as { value?: unknown }).value ?? ''));
 
@@ -408,13 +445,13 @@ async function setComputedTimePeriodStartValue(page: IPage): Promise<string> {
       getErrorMessage(error),
     );
   }
-
-  await waitRandomDuration(page, [200, 700]);
+  await page.wait({ time: TIME_PERIOD_STEP_WAIT_SECONDS });
 
   const enterDispatchResult = await page.evaluate(buildDispatchEnterOnInputScript(inputSelector));
   if (!enterDispatchResult || typeof enterDispatchResult !== 'object' || !(enterDispatchResult as { ok?: boolean }).ok) {
     throw new CommandExecutionError('Shopee product-shopdora-download could not trigger Enter on the time-period start date');
   }
+  await page.wait({ time: TIME_PERIOD_STEP_WAIT_SECONDS });
 
   try {
     if (typeof page.nativeKeyPress === 'function') {
@@ -428,6 +465,7 @@ async function setComputedTimePeriodStartValue(page: IPage): Promise<string> {
       getErrorMessage(error),
     );
   }
+  await page.wait({ time: TIME_PERIOD_STEP_WAIT_SECONDS });
 
   return nextValue;
 }
@@ -510,6 +548,9 @@ cli({
     const initialShopdoraLoginState = await readShopdoraLoginState(page);
     await page.wait({ selector: '.putButton .common-btn.en_common-btn', timeout: 15 });
     const exportReviewButtonSelector = await resolveTargetSelector(page, 'export-review-button', 'Export Review button');
+    await page.wait({ time: EXPORT_REVIEW_PRE_HOVER_WAIT_SECONDS });
+    await smoothScroll(page, 'down', EXPORT_REVIEW_PRE_HOVER_SCROLL_DOWN_PX);
+    await smoothScroll(page, 'up', EXPORT_REVIEW_PRE_HOVER_SCROLL_UP_PX);
     await simulateHumanBehavior(page, {
       selector: exportReviewButtonSelector,
       scrollRangePx: [60, 180],
@@ -519,6 +560,10 @@ cli({
     });
     await waitRandomDuration(page, [3000, 5000]);
     await clickSelector(page, exportReviewButtonSelector, 'Export Review');
+    await simulatePointerAway(page, exportReviewButtonSelector, {
+      preWaitRangeMs: [180, 420],
+      postWaitRangeMs: [500, 1200],
+    });
     await waitRandomDuration(page, [2000, 6000]);
 
     const postExportShopdoraLoginState = await readShopdoraLoginState(page);
@@ -607,5 +652,6 @@ export const __test__ = {
   buildDispatchEnterOnInputScript,
   computeShiftedDateFromInputValue,
   buildWaitForExportReviewReadyScript,
+  smoothScroll,
   setComputedTimePeriodStartValue,
 };

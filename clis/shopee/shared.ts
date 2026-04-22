@@ -122,6 +122,102 @@ export function buildHumanPointerScript(selector: string): string {
   `;
 }
 
+export function buildHumanPointerAwayScript(selector: string): string {
+  return `
+    (() => {
+      let target = null;
+      try {
+        target = document.querySelector(${JSON.stringify(selector)});
+      } catch {
+        return { ok: false, reason: 'invalid_selector' };
+      }
+
+      if (!(target instanceof HTMLElement)) {
+        return { ok: false, reason: 'not_found' };
+      }
+
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) {
+        try {
+          active.blur();
+        } catch {}
+      }
+
+      const rect = target.getBoundingClientRect();
+      const viewportWidth = Math.max(window.innerWidth || 0, document.documentElement?.clientWidth || 0, 1);
+      const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0, 1);
+      const clampX = (value) => Math.max(1, Math.min(viewportWidth - 1, Math.round(value)));
+      const clampY = (value) => Math.max(1, Math.min(viewportHeight - 1, Math.round(value)));
+      const targetCenterX = rect.left + rect.width / 2;
+      const targetCenterY = rect.top + rect.height / 2;
+      const rawFinalClientX = rect.right + 48 + Math.random() * 120;
+      const rawFinalClientY = rect.top + rect.height + 24 + Math.random() * 80;
+      const finalClientX = clampX(rawFinalClientX);
+      const finalClientY = clampY(rawFinalClientY);
+      const midClientX = clampX(
+        targetCenterX + (finalClientX - targetCenterX) * (0.45 + Math.random() * 0.15),
+      );
+      const midClientY = clampY(
+        targetCenterY + (finalClientY - targetCenterY) * (0.45 + Math.random() * 0.15),
+      );
+      const resolveDispatchTarget = (clientX, clientY) => {
+        const nextTarget = document.elementFromPoint(clientX, clientY);
+        return nextTarget instanceof HTMLElement
+          ? nextTarget
+          : document.body instanceof HTMLElement
+            ? document.body
+            : target;
+      };
+      const waypoints = [
+        { clientX: midClientX, clientY: midClientY },
+        { clientX: finalClientX, clientY: finalClientY },
+      ];
+
+      for (const type of ['mouseout', 'mouseleave']) {
+        try {
+          target.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: midClientX,
+            clientY: midClientY,
+            view: window,
+          }));
+        } catch {}
+      }
+
+      for (const waypoint of waypoints) {
+        const dispatchTarget = resolveDispatchTarget(
+          waypoint.clientX,
+          waypoint.clientY,
+        );
+        for (const type of ['mousemove', 'mouseenter', 'mouseover']) {
+          try {
+            dispatchTarget.dispatchEvent(new MouseEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              clientX: waypoint.clientX,
+              clientY: waypoint.clientY,
+              view: window,
+            }));
+          } catch {}
+        }
+      }
+
+      const finalTarget = resolveDispatchTarget(finalClientX, finalClientY);
+      return {
+        ok: true,
+        midClientX,
+        midClientY,
+        finalClientX,
+        finalClientY,
+        tag: finalTarget.tagName?.toLowerCase?.() || '',
+      };
+    })()
+  `;
+}
+
 export function buildReadShopdoraLoginStateScript(): string {
   return `
     (() => ({
@@ -186,6 +282,25 @@ export async function simulateHumanBehavior(
   await waitRandomDuration(page, postWaitRangeMs);
 }
 
+export async function simulatePointerAway(
+  page: IPage,
+  selector: string,
+  {
+    preWaitRangeMs = [120, 320],
+    postWaitRangeMs = [180, 480],
+  }: Pick<HumanBehaviorOptions, 'preWaitRangeMs' | 'postWaitRangeMs'> = {},
+): Promise<void> {
+  await waitRandomDuration(page, preWaitRangeMs);
+
+  try {
+    await page.evaluate(buildHumanPointerAwayScript(selector));
+  } catch {
+    // Best-effort exit movement should not block the primary workflow.
+  }
+
+  await waitRandomDuration(page, postWaitRangeMs);
+}
+
 export async function clearLocalStorageForUrlHost(page: IPage, targetUrl: string): Promise<void> {
   const target = new URL(targetUrl);
   await page.goto(target.origin, { waitUntil: 'load' });
@@ -204,10 +319,12 @@ export const __test__ = {
   appendShopdoraLoginMessage,
   buildClearLocalStorageScript,
   buildHumanPointerScript,
+  buildHumanPointerAwayScript,
   buildReadShopdoraLoginStateScript,
   clearLocalStorageForUrlHost,
   randomInRange,
   readShopdoraLoginState,
+  simulatePointerAway,
   waitRandomDuration,
   simulateHumanBehavior,
 };

@@ -40,6 +40,11 @@ import { isRecord } from './utils.js';
 
 const PACKAGE_ROOT = findPackageRoot(fileURLToPath(import.meta.url));
 
+function isSourceTreeInstall(): boolean {
+  return fs.existsSync(path.join(PACKAGE_ROOT, 'src'))
+    && fs.existsSync(path.join(PACKAGE_ROOT, 'clis'));
+}
+
 /**
  * Ensure ~/.opencli/node_modules/@jackwener/opencli symlink exists so that
  * user CLIs in ~/.opencli/clis/ can `import { cli } from '@jackwener/opencli/registry'`.
@@ -89,6 +94,11 @@ const ADAPTER_MANIFEST_PATH = path.join(USER_OPENCLI_DIR, 'adapter-manifest.json
  * trigger adapter fetch on first CLI invocation when ~/.opencli/clis/ is empty.
  */
 export async function ensureUserAdapters(): Promise<void> {
+  // Source-tree installs (npm link / local development) should use dist/clis
+  // directly.  Creating ~/.opencli/clis here would shadow freshly built local
+  // adapters with stale copied files.
+  if (isSourceTreeInstall()) return;
+
   // If adapter manifest already exists, adapters were fetched — nothing to do
   try {
     await fs.promises.access(ADAPTER_MANIFEST_PATH);

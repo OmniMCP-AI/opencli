@@ -113,6 +113,18 @@ describe('BrowserBridge state', () => {
     expect(bridge.state).toBe('closed');
   });
 
+  it('closes the automation window when an active session ends', async () => {
+    const bridge = new BrowserBridge();
+    const closeWindow = vi.fn(async () => {});
+    (bridge as any)._state = 'connected';
+    (bridge as any)._page = { closeWindow };
+
+    await bridge.close();
+
+    expect(closeWindow).toHaveBeenCalledTimes(1);
+    expect(bridge.state).toBe('closed');
+  });
+
   it('rejects connect() after the session has been closed', async () => {
     const bridge = new BrowserBridge();
     await bridge.close();

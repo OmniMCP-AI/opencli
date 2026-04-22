@@ -14,6 +14,17 @@ describe('shopee shared humanization helpers', () => {
     expect(script).toContain('scrollIntoView');
   });
 
+  it('builds a pointer-away script that blurs focus and emits a two-step leave trajectory', () => {
+    const script = __test__.buildHumanPointerAwayScript('.target-button');
+    expect(script).toContain('.target-button');
+    expect(script).toContain('blur()');
+    expect(script).toContain('mouseleave');
+    expect(script).toContain('elementFromPoint');
+    expect(script).toContain('waypoints');
+    expect(script).toContain('midClientX');
+    expect(script).toContain('finalClientX');
+  });
+
   it('builds a localStorage clearing script scoped to the target host', () => {
     const script = __test__.buildClearLocalStorageScript('shopee.sg');
     expect(script).toContain('shopee.sg');
@@ -64,6 +75,28 @@ describe('shopee shared humanization helpers', () => {
     expect(page.wait).toHaveBeenNthCalledWith(2, { time: 0.2 });
     expect(page.scroll).toHaveBeenCalledWith('down', 180);
     expect(page.scroll).toHaveBeenCalledWith('up', 58);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.stringContaining('.target-button'));
+  });
+
+  it('moves the pointer away from the active selector before continuing', async () => {
+    vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.4);
+
+    const page = {
+      wait: vi.fn<NonNullable<IPage['wait']>>().mockResolvedValue(undefined),
+      evaluate: vi.fn<NonNullable<IPage['evaluate']>>().mockResolvedValue({ ok: true }),
+    } as unknown as IPage;
+
+    await __test__.simulatePointerAway(page, '.target-button', {
+      preWaitRangeMs: [100, 300],
+      postWaitRangeMs: [200, 400],
+    });
+
+    expect(page.wait).toHaveBeenCalledTimes(2);
+    expect(page.wait).toHaveBeenNthCalledWith(1, { time: 0.2 });
+    expect(page.wait).toHaveBeenNthCalledWith(2, { time: 0.28 });
+    expect(page.evaluate).toHaveBeenCalledWith(expect.stringContaining('mouseleave'));
     expect(page.evaluate).toHaveBeenCalledWith(expect.stringContaining('.target-button'));
   });
 

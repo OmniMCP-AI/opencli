@@ -107,7 +107,12 @@ describe('shopee product-shopdora-download adapter', () => {
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining("new KeyboardEvent('keydown'"));
     expect(nativeKeyPress).toHaveBeenCalledWith('Enter');
     expect(pressKey).not.toHaveBeenCalled();
-    expect(wait).toHaveBeenCalled();
+    expect(wait).toHaveBeenCalledTimes(5);
+    expect(wait).toHaveBeenNthCalledWith(1, { time: 1 });
+    expect(wait).toHaveBeenNthCalledWith(2, { time: 1 });
+    expect(wait).toHaveBeenNthCalledWith(3, { time: 1 });
+    expect(wait).toHaveBeenNthCalledWith(4, { time: 1 });
+    expect(wait).toHaveBeenNthCalledWith(5, { time: 1 });
   });
 
   it('binds to the matching existing browser tab using the shopee workspace', async () => {
@@ -195,6 +200,20 @@ describe('shopee product-shopdora-download adapter', () => {
       { waitUntil: 'load' },
     );
     expect(wait).toHaveBeenCalledWith({ selector: '.putButton .common-btn.en_common-btn', timeout: 15 });
+    expect(wait).toHaveBeenCalledWith({ time: 3 });
+    const downScrolled = scroll.mock.calls
+      .filter(([direction]) => direction === 'down')
+      .reduce((sum, [, amount]) => sum + Number(amount), 0);
+    const upScrolled = scroll.mock.calls
+      .filter(([direction]) => direction === 'up')
+      .reduce((sum, [, amount]) => sum + Number(amount), 0);
+    expect(downScrolled).toBeGreaterThanOrEqual(320);
+    expect(upScrolled).toBeGreaterThanOrEqual(260);
+    const timedWaits = wait.mock.calls
+      .map(([arg]) => (arg && typeof arg === 'object' ? Number((arg as { time?: number }).time ?? 0) : 0))
+      .filter((value) => value > 0);
+    const oneSecondWaitCount = timedWaits.filter((value) => value === 1).length;
+    expect(oneSecondWaitCount).toBeGreaterThanOrEqual(5);
     expect(click).toHaveBeenCalledWith(EXPORT_REVIEW_BUTTON_SELECTOR);
     expect(click).toHaveBeenCalledWith(TIME_PERIOD_START_INPUT_SELECTOR);
     expect(click).toHaveBeenCalledWith(CONFIRM_EXPORT_BUTTON_SELECTOR);
@@ -202,6 +221,7 @@ describe('shopee product-shopdora-download adapter', () => {
     expect(pressKey).toHaveBeenCalledWith('Enter');
     expect(scroll).toHaveBeenCalled();
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining('export-review-button'));
+    expect(evaluate).toHaveBeenCalledWith(expect.stringContaining('mouseleave'));
     expect(wait).toHaveBeenCalledWith({ selector: EXPORT_DIALOG_SELECTOR, timeout: 10 });
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining('download-review-images-input'));
     expect(evaluate).toHaveBeenCalledWith(expect.stringContaining('confirm-export-button'));

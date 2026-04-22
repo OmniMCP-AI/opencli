@@ -24,6 +24,8 @@ const USER_CLIS_DIR = join(OPENCLI_DIR, 'clis');
 const MANIFEST_PATH = join(OPENCLI_DIR, 'adapter-manifest.json');
 const PACKAGE_ROOT = resolve(import.meta.dirname, '..');
 const BUILTIN_CLIS = join(PACKAGE_ROOT, 'dist', 'clis');
+const SOURCE_CLIS = join(PACKAGE_ROOT, 'clis');
+const SOURCE_SRC = join(PACKAGE_ROOT, 'src');
 
 function log(msg) {
   console.log(`[opencli] ${msg}`);
@@ -35,6 +37,10 @@ function getPackageVersion() {
   } catch {
     return 'unknown';
   }
+}
+
+function isSourceTreeInstall() {
+  return existsSync(SOURCE_SRC) && existsSync(SOURCE_CLIS);
 }
 
 /**
@@ -81,6 +87,35 @@ function pruneEmptyDirs(filePath, stopAt) {
       break;
     }
   }
+}
+
+function removeOfficialAdapters() {
+  const oldManifest = readManifest();
+  const oldOfficialFiles = oldManifest?.files;
+  if (!Array.isArray(oldOfficialFiles)) return 0;
+
+  let removed = 0;
+  for (const relPath of oldOfficialFiles) {
+    const dst = join(USER_CLIS_DIR, relPath);
+    try {
+      unlinkSync(dst);
+      pruneEmptyDirs(dst, USER_CLIS_DIR);
+      removed++;
+    } catch {
+      // File may not exist locally
+    }
+  }
+
+  try {
+    const entries = existsSync(USER_CLIS_DIR) ? readdirSync(USER_CLIS_DIR) : [];
+    if (entries.length === 0) rmSync(USER_CLIS_DIR);
+  } catch {}
+
+  try {
+    rmSync(MANIFEST_PATH);
+  } catch {}
+
+  return removed;
 }
 
 export function fetchAdapters() {
@@ -150,6 +185,16 @@ function main() {
   const isExplicit = process.env.OPENCLI_FETCH === '1';
   const isFirstRun = process.env._OPENCLI_FIRST_RUN === '1';
   if (!isGlobal && !isExplicit && !isFirstRun) return;
+
+  // npm link / source-tree global installs should use dist/clis directly.
+  // Copying dist/clis into ~/.opencli/clis would make stale user adapters
+  // override later local builds until the user manually deletes them.
+  if (!isExplicit && isSourceTreeInstall()) {
+    const removed = removeOfficialAdapters();
+    log('Source-tree install detected — skipping adapter copy to ~/.opencli/clis' +
+      (removed > 0 ? `, removed ${removed} stale copied adapter files` : ''));
+    return;
+  }
 
   fetchAdapters();
 }

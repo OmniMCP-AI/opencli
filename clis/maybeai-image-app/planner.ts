@@ -310,6 +310,17 @@ function normalizeSelectedAppInput(appId: AppId, input: Record<string, unknown>,
     delete input.product;
     delete input.products;
   }
+
+  if (['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
+    if (!isStructuredImageArray(input.product_and_attrs)) {
+      const legacy = readLegacyProductAndAttrs(input.product_and_attrs);
+      const product = firstString(kwargs.product, legacy.product);
+      const attrs = splitList(firstString(kwargs.attrs)).length > 0 ? splitList(firstString(kwargs.attrs)) : legacy.attrs;
+      if (product) input.product_and_attrs = buildStructuredProductAndAttrs(product, attrs);
+    }
+    delete input.product;
+    delete input.products;
+  }
 }
 
 function selectApp(intent: string, input: Record<string, unknown>, kwargs: Record<string, unknown>): AppDefinition {
@@ -432,7 +443,7 @@ function routeDataframeImages(appId: AppId, input: Record<string, unknown>, urls
   if (appId === 'gen-size-compare' && !hasValue(input.product_and_size_chart) && product && sizeChart) {
     input.product_and_size_chart = [{ product_image_url: product, reference_image_url: sizeChart }];
   } else if (!hasValue(input.product_and_attrs) && product) {
-    input.product_and_attrs = [{ product_image_url: product, attr_image_urls: attrs }];
+    input.product_and_attrs = buildStructuredProductAndAttrs(product, attrs);
   }
 }
 
@@ -630,6 +641,43 @@ function buildStructuredReferenceImages(urls: string[]) {
     image_type: imageTypes[Math.min(index, imageTypes.length - 1)],
     url,
   }));
+}
+
+function buildStructuredProductAndAttrs(product: string, attrs: string[]) {
+  return [
+    { image_type: 'product_image_url', url: product, description: '商品图片' },
+    ...attrs.filter(Boolean).map(url => ({
+      image_type: 'product_attribute_url',
+      url,
+      description: '商品属性图片',
+    })),
+  ];
+}
+
+function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: string[] } {
+  if (!Array.isArray(value)) return { attrs: [] };
+
+  const productCandidates: string[] = [];
+  const attrCandidates: string[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
+      productCandidates.push(record.product_image_url.trim());
+    }
+    if (Array.isArray(record.attr_image_urls)) {
+      attrCandidates.push(
+        ...record.attr_image_urls
+          .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+          .map(entry => entry.trim()),
+      );
+    }
+  }
+
+  return {
+    product: productCandidates[0],
+    attrs: [...new Set(attrCandidates)],
+  };
 }
 
 

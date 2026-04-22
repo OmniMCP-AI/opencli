@@ -57,4 +57,59 @@ describe('maybeai-image-app planner', () => {
     expect(plan.selectedApp).toBe('gen-reference');
     expect(plan.candidates[0]?.app).toBe('gen-reference');
   });
+
+  it('builds details-selling-points input using shell structured-image format', () => {
+    const plan = buildImageAppPlan(['给这个商品生成卖点图'], {
+      app: 'details-selling-points',
+      product: 'https://example.com/product.jpg',
+      attrs: 'https://example.com/attr1.jpg,https://example.com/attr2.jpg',
+    });
+
+    expect(plan.selectedApp).toBe('details-selling-points');
+    expect(plan.missingFields).toEqual([]);
+    expect(plan.input.product_and_attrs).toEqual([
+      {
+        image_type: 'product_image_url',
+        url: 'https://example.com/product.jpg',
+        description: '商品图片',
+      },
+      {
+        image_type: 'product_attribute_url',
+        url: 'https://example.com/attr1.jpg',
+        description: '商品属性图片',
+      },
+      {
+        image_type: 'product_attribute_url',
+        url: 'https://example.com/attr2.jpg',
+        description: '商品属性图片',
+      },
+    ]);
+  });
+
+  it('normalizes legacy product_and_attrs objects into shell structured-image format', () => {
+    const plan = buildImageAppPlan(['给这个商品生成卖点图'], {
+      app: 'details-selling-points',
+      input: JSON.stringify({
+        product_and_attrs: [
+          {
+            product_image_url: 'https://example.com/product.jpg',
+            attr_image_urls: ['https://example.com/attr1.jpg'],
+          },
+        ],
+      }),
+    });
+
+    expect(plan.input.product_and_attrs).toEqual([
+      {
+        image_type: 'product_image_url',
+        url: 'https://example.com/product.jpg',
+        description: '商品图片',
+      },
+      {
+        image_type: 'product_attribute_url',
+        url: 'https://example.com/attr1.jpg',
+        description: '商品属性图片',
+      },
+    ]);
+  });
 });

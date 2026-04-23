@@ -441,7 +441,7 @@ function routeDataframeImages(appId: AppId, input: Record<string, unknown>, urls
   const sizeChart = firstString(kwargs['size-chart']) ?? urls[1];
 
   if (appId === 'gen-size-compare' && !hasValue(input.product_and_size_chart) && product && sizeChart) {
-    input.product_and_size_chart = [{ product_image_url: product, reference_image_url: sizeChart }];
+    input.product_and_size_chart = buildStructuredProductAndAttrs(product, [sizeChart]);
   } else if (!hasValue(input.product_and_attrs) && product) {
     input.product_and_attrs = buildStructuredProductAndAttrs(product, attrs);
   }

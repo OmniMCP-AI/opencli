@@ -454,7 +454,7 @@ export function toWorkflowVariables(app: AppDefinition, inputData: Record<string
 
   for (const fieldDef of app.fields) {
     const key = fieldDef.key;
-    const value = inputData[key];
+    const value = normalizeWorkflowFieldValue(app.id, key, inputData[key]);
     remaining.delete(key);
     if (value === undefined || value === null || value === '') {
       if (fieldDef.required) {
@@ -472,6 +472,23 @@ export function toWorkflowVariables(app: AppDefinition, inputData: Record<string
   return variables;
 }
 
+function normalizeWorkflowFieldValue(appId: string, fieldKey: string, value: unknown) {
+  if (fieldKey === 'product_and_attrs' && ['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
+    if (!isStructuredImageArray(value)) {
+      const legacy = readLegacyProductAndAttrs(value);
+      if (legacy.product) return buildStructuredProductAndAttrs(legacy.product, legacy.attrs);
+    }
+  }
+
+  if (fieldKey === 'product_and_size_chart' && appId === 'gen-size-compare') {
+    if (!isStructuredImageArray(value)) {
+      const legacy = readLegacyProductAndSizeChart(value);
+      if (legacy.product && legacy.sizeChart) return buildStructuredProductAndAttrs(legacy.product, [legacy.sizeChart]);
+    }
+  }
+  return value;
+}
+
 function validateCanonicalFieldValue(fieldKey: string, value: unknown): void {
   if (fieldKey === 'platform') validateOption('platform', value, fieldKey);
   else if (['market', 'country', 'region'].includes(fieldKey)) validateOption('country', value, fieldKey);
@@ -481,4 +498,71 @@ function validateCanonicalFieldValue(fieldKey: string, value: unknown): void {
   else if (fieldKey === 'ratio') validateOption('ratio', value, fieldKey);
   else if (fieldKey === 'resolution') validateOption('resolution', value, fieldKey);
   else if (fieldKey === 'engine') validateOption('model', value, fieldKey);
+}
+
+function buildStructuredProductAndAttrs(product: string, attrs: string[]) {
+  return [
+    { image_type: 'product_image_url', url: product, description: '商品图片' },
+    ...attrs.filter(Boolean).map(url => ({
+      image_type: 'product_attribute_url',
+      url,
+      description: '商品属性图片',
+    })),
+  ];
+}
+
+function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: string[] } {
+  if (!Array.isArray(value)) return { attrs: [] };
+
+  const productCandidates: string[] = [];
+  const attrCandidates: string[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
+      productCandidates.push(record.product_image_url.trim());
+    }
+    if (Array.isArray(record.attr_image_urls)) {
+      attrCandidates.push(
+        ...record.attr_image_urls
+          .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+          .map(entry => entry.trim()),
+      );
+    }
+  }
+
+  return {
+    product: productCandidates[0],
+    attrs: [...new Set(attrCandidates)],
+  };
+}
+
+function readLegacyProductAndSizeChart(value: unknown): { product?: string; sizeChart?: string } {
+  if (!Array.isArray(value)) return {};
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const product = typeof record.product_image_url === 'string' && record.product_image_url.trim()
+      ? record.product_image_url.trim()
+      : undefined;
+    const sizeChart = typeof record.reference_image_url === 'string' && record.reference_image_url.trim()
+      ? record.reference_image_url.trim()
+      : undefined;
+    if (product && sizeChart) return { product, sizeChart };
+  }
+
+  return {};
+}
+
+function isStructuredImageArray(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(item =>
+      !!item
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && typeof (item as Record<string, unknown>).image_type === 'string'
+      && typeof (item as Record<string, unknown>).url === 'string');
 }

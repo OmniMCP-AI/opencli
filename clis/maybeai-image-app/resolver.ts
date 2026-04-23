@@ -1,6 +1,6 @@
 import { CliError } from '@jackwener/opencli/errors';
 import { getApp, toWorkflowVariables, type AppDefinition } from './catalog.js';
-import { assertModelSupportsRatio, getModelProfile, selectDefaultModelForRatio } from './model-profiles.js';
+import { assertModelSupportsRatio, getModelProfile } from './model-profiles.js';
 import { getPlatformRule } from './platform-profiles.js';
 import { IMAGE_KINDS, PLATFORMS, validateOption } from './profiles.js';
 
@@ -32,26 +32,6 @@ export const APP_IMAGE_KIND: Record<string, string> = {
   'remove-face': 'edit',
 };
 
-type AppPolicy = {
-  platformDefaults?: boolean;
-  fixedDefaults?: Record<string, string>;
-  lockedFields?: string[];
-  defaultEngine?: string;
-};
-
-const APP_POLICIES: Record<string, AppPolicy> = {
-  'replica-listing-image': { defaultEngine: 'google/gemini-3.1-flash-image-preview' },
-  'pattern-extraction': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview', background: ' ' }, lockedFields: ['engine'] },
-  'pattern-fission': { platformDefaults: false, fixedDefaults: { engine: 'ggoogle/gemini-3.1-flash-image-preview', background: ' ' }, lockedFields: ['engine'] },
-  'scene-fission': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview' }, lockedFields: ['engine'] },
-  '3d-from-2d': { platformDefaults: false, fixedDefaults: { engine: 'google/gemini-3.1-flash-image-preview' }, lockedFields: ['engine'] },
-  'product-modification': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit' }, lockedFields: ['engine'] },
-  'change-color': { platformDefaults: false },
-  'remove-background': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit', background: ' ' }, lockedFields: ['engine'] },
-  'remove-watermark': { platformDefaults: false, fixedDefaults: { engine: 'fal-ai/gpt-image-1.5/edit' }, lockedFields: ['engine'] },
-  'remove-face': { platformDefaults: false },
-};
-
 export function inferImageKind(appId: string): string {
   return APP_IMAGE_KIND[appId] ?? 'edit';
 }
@@ -62,10 +42,8 @@ export function resolveImageAppInput(appId: string, rawInput: Record<string, unk
   const appliedDefaults: Record<string, unknown> = {};
   const inputData = normalizeAliases(rawInput);
   const imageKind = resolveImageKind(app.id, inputData);
-  const appPolicy = APP_POLICIES[app.id] ?? {};
   const platform = resolvePlatform(inputData);
   const platformRule = platform ? getPlatformRule(platform) : undefined;
-  const canApplyPlatformDefaults = !!platformRule && appPolicy.platformDefaults !== false;
 
   delete inputData.kind;
   delete inputData.imageKind;
@@ -77,36 +55,28 @@ export function resolveImageAppInput(appId: string, rawInput: Record<string, unk
     warnings.push('platform is used for API adaptation only; this Shell app has no platform backend field.');
   }
 
-  applyFixedDefaults(app, inputData, appPolicy, appliedDefaults);
-
-  if (canApplyPlatformDefaults && platformRule) applyPlatformDefaults(app, inputData, imageKind, platformRule, appliedDefaults, warnings);
-  else if (platformRule && appPolicy.platformDefaults === false) warnings.push(`${app.id} keeps Shell app defaults; platform ratio defaults were not applied.`);
-
   const resolvedRatio = readRatio(inputData.ratio);
-  const engine = resolveEngine(app, inputData, appPolicy, resolvedRatio, appliedDefaults);
-  if (engine) assertModelSupportsRatio(engine, resolvedRatio);
-
-  if (hasField(app, 'angles') && inputData.angles === undefined) {
-    const angles = platformRule?.defaultAngles ?? ['Frontal', 'Lateral', 'Posterior'];
-    inputData.angles = angles;
-    appliedDefaults.angles = angles;
+  if (platformRule && resolvedRatio && !platformRule.allowedRatios.includes(resolvedRatio as never)) {
+    warnings.push(`${platformRule.platform} ${imageKind} usually uses: ${platformRule.allowedRatios.join(', ')}; received ${resolvedRatio}.`);
   }
+
+  const engine = resolveEngine(app, inputData);
+  if (engine) assertModelSupportsRatio(engine, resolvedRatio);
 
   pruneTransientInputKeys(app.id, inputData);
   dropUnsupportedAppKeys(app, inputData, warnings);
 
   const variables = toWorkflowVariables(app, inputData);
-  const outputRatio = resolvedRatio ?? (canApplyPlatformDefaults && platformRule ? platformRule.defaultRatio : undefined);
   const modelProfile = engine ? (() => {
     const profile = getModelProfile(engine);
     return { model: engine, priority: profile.priority, supportedRatios: profile.supportedRatios };
   })() : null;
-  const platformProfile = platformRule && outputRatio ? {
+  const platformProfile = platformRule ? {
     platform: platformRule.platform,
     defaultRatio: platformRule.defaultRatio,
-    ratio: outputRatio,
+    ratio: resolvedRatio,
     allowedRatios: platformRule.allowedRatios,
-    resolution: String(inputData.resolution ?? platformRule.defaultResolution),
+    resolution: typeof inputData.resolution === 'string' ? inputData.resolution : undefined,
     sourceConfidence: [...new Set(platformRule.sources.map(source => source.confidence))].sort(),
     notes: platformRule.notes,
   } : null;
@@ -163,61 +133,14 @@ function resolvePlatform(inputData: Record<string, unknown>): string | undefined
   return rawPlatform as string;
 }
 
-function applyPlatformDefaults(app: AppDefinition, inputData: Record<string, unknown>, imageKind: string, rule: ReturnType<typeof getPlatformRule>, appliedDefaults: Record<string, unknown>, warnings: string[]) {
-  if (hasField(app, 'ratio')) {
-    if (inputData.ratio === undefined || inputData.ratio === '' || inputData.ratio === 'auto') {
-      const ratio = rule.ratiosByKind[imageKind as keyof typeof rule.ratiosByKind] ?? rule.defaultRatio;
-      inputData.ratio = ratio;
-      appliedDefaults.ratio = ratio;
-    } else {
-      const ratio = readRatio(inputData.ratio);
-      if (ratio && !rule.allowedRatios.includes(ratio as never)) warnings.push(`${rule.platform} ${imageKind} usually uses: ${rule.allowedRatios.join(', ')}; received ${ratio}.`);
-    }
-  }
-
-  if (hasField(app, 'resolution') && (inputData.resolution === undefined || inputData.resolution === '')) {
-    inputData.resolution = rule.defaultResolution;
-    appliedDefaults.resolution = rule.defaultResolution;
-  }
-}
-
-function applyFixedDefaults(app: AppDefinition, inputData: Record<string, unknown>, policy: AppPolicy, appliedDefaults: Record<string, unknown>) {
-  const fixedDefaults = (policy.fixedDefaults ?? {}) as Record<string, string>;
-  const lockedFields = (policy.lockedFields ?? []) as string[];
-  for (const [field, defaultValue] of Object.entries(fixedDefaults)) {
-    if (!hasField(app, field)) continue;
-    const currentValue = inputData[field];
-    if (currentValue === undefined || currentValue === '') {
-      inputData[field] = defaultValue;
-      appliedDefaults[field] = defaultValue;
-      continue;
-    }
-    if (lockedFields.includes(field) && currentValue !== defaultValue) {
-      throw new CliError('ARGUMENT', `${app.id} has fixed ${field}: ${defaultValue}`, `Remove ${field} from input or use ${field}=${defaultValue}.`);
-    }
-  }
-}
-
-function resolveEngine(app: AppDefinition, inputData: Record<string, unknown>, policy: AppPolicy, ratio: string | undefined, appliedDefaults: Record<string, unknown>) {
+function resolveEngine(app: AppDefinition, inputData: Record<string, unknown>) {
   if (!hasField(app, 'engine')) return undefined;
-  const fixedEngine = (policy.fixedDefaults as Record<string, string> | undefined)?.engine;
   const currentEngine = inputData.engine;
-  if (fixedEngine) {
-    if (currentEngine !== undefined && currentEngine !== '' && currentEngine !== fixedEngine) {
-      throw new CliError('ARGUMENT', `${app.id} has fixed engine: ${fixedEngine}`, `This app follows Shell defaults and cannot switch to ${String(currentEngine)}.`);
-    }
-    inputData.engine = fixedEngine;
-    if (currentEngine === undefined || currentEngine === '') appliedDefaults.engine = fixedEngine;
-    return fixedEngine;
-  }
   if (currentEngine !== undefined && currentEngine !== '') {
     validateOption('model', currentEngine, 'engine');
     return String(currentEngine);
   }
-  const engine = policy.defaultEngine ?? selectDefaultModelForRatio(ratio);
-  inputData.engine = engine;
-  appliedDefaults.engine = engine;
-  return engine;
+  return undefined;
 }
 
 function hasField(app: AppDefinition, key: string) {
@@ -234,6 +157,15 @@ function canonicalizeAppInput(appId: string, inputData: Record<string, unknown>)
       const legacy = readLegacyProductAndAttrs(inputData.product_and_attrs);
       if (legacy.product) {
         inputData.product_and_attrs = buildStructuredProductAndAttrs(legacy.product, legacy.attrs);
+      }
+    }
+  }
+
+  if (appId === 'gen-size-compare') {
+    if (!isStructuredImageArray(inputData.product_and_size_chart)) {
+      const legacy = readLegacyProductAndSizeChart(inputData.product_and_size_chart);
+      if (legacy.product && legacy.sizeChart) {
+        inputData.product_and_size_chart = buildStructuredProductAndAttrs(legacy.product, [legacy.sizeChart]);
       }
     }
   }
@@ -312,6 +244,24 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
     product: productCandidates[0],
     attrs: [...new Set(attrCandidates)],
   };
+}
+
+function readLegacyProductAndSizeChart(value: unknown): { product?: string; sizeChart?: string } {
+  if (!Array.isArray(value)) return {};
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const product = typeof record.product_image_url === 'string' && record.product_image_url.trim()
+      ? record.product_image_url.trim()
+      : undefined;
+    const sizeChart = typeof record.reference_image_url === 'string' && record.reference_image_url.trim()
+      ? record.reference_image_url.trim()
+      : undefined;
+    if (product && sizeChart) return { product, sizeChart };
+  }
+
+  return {};
 }
 
 function isStructuredImageArray(value: unknown): boolean {

@@ -70,6 +70,8 @@ export function resolveImageAppInput(appId: string, rawInput: Record<string, unk
   delete inputData.kind;
   delete inputData.imageKind;
 
+  canonicalizeAppInput(app.id, inputData);
+
   if (!hasField(app, 'platform') && inputData.platform !== undefined) {
     delete inputData.platform;
     warnings.push('platform is used for API adaptation only; this Shell app has no platform backend field.');
@@ -89,6 +91,9 @@ export function resolveImageAppInput(appId: string, rawInput: Record<string, unk
     inputData.angles = angles;
     appliedDefaults.angles = angles;
   }
+
+  pruneTransientInputKeys(app.id, inputData);
+  dropUnsupportedAppKeys(app, inputData, warnings);
 
   const variables = toWorkflowVariables(app, inputData);
   const outputRatio = resolvedRatio ?? (canApplyPlatformDefaults && platformRule ? platformRule.defaultRatio : undefined);
@@ -221,4 +226,101 @@ function hasField(app: AppDefinition, key: string) {
 
 function readRatio(value: unknown) {
   return typeof value === 'string' ? value : undefined;
+}
+
+function canonicalizeAppInput(appId: string, inputData: Record<string, unknown>) {
+  if (['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
+    if (!isStructuredImageArray(inputData.product_and_attrs)) {
+      const legacy = readLegacyProductAndAttrs(inputData.product_and_attrs);
+      if (legacy.product) {
+        inputData.product_and_attrs = buildStructuredProductAndAttrs(legacy.product, legacy.attrs);
+      }
+    }
+  }
+}
+
+function pruneTransientInputKeys(appId: string, inputData: Record<string, unknown>) {
+  const keysToDelete = new Set<string>(['kind', 'imageKind']);
+
+  if (['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
+    for (const key of ['product', 'products', 'attrs']) keysToDelete.add(key);
+  }
+
+  if (appId === 'replica-listing-image') {
+    for (const key of ['product', 'products', 'reference', 'reference-template']) keysToDelete.add(key);
+  }
+
+  if (appId === 'gen-reference') {
+    for (const key of ['product', 'products', 'reference']) keysToDelete.add(key);
+  }
+
+  if (appId === 'gen-size-compare') {
+    for (const key of ['product', 'products', 'size-chart']) keysToDelete.add(key);
+  }
+
+  for (const key of keysToDelete) delete inputData[key];
+}
+
+function dropUnsupportedAppKeys(app: AppDefinition, inputData: Record<string, unknown>, warnings: string[]) {
+  const allowedKeys = new Set(app.fields.map(field => field.key));
+  const droppedKeys: string[] = [];
+
+  for (const key of Object.keys(inputData)) {
+    if (allowedKeys.has(key)) continue;
+    droppedKeys.push(key);
+    delete inputData[key];
+  }
+
+  if (droppedKeys.length > 0) {
+    warnings.push(`Dropped unsupported input fields for ${app.id}: ${droppedKeys.sort().join(', ')}`);
+  }
+}
+
+function buildStructuredProductAndAttrs(product: string, attrs: string[]) {
+  return [
+    { image_type: 'product_image_url', url: product, description: '商品图片' },
+    ...attrs.filter(Boolean).map(url => ({
+      image_type: 'product_attribute_url',
+      url,
+      description: '商品属性图片',
+    })),
+  ];
+}
+
+function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: string[] } {
+  if (!Array.isArray(value)) return { attrs: [] };
+
+  const productCandidates: string[] = [];
+  const attrCandidates: string[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
+      productCandidates.push(record.product_image_url.trim());
+    }
+    if (Array.isArray(record.attr_image_urls)) {
+      attrCandidates.push(
+        ...record.attr_image_urls
+          .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+          .map(entry => entry.trim()),
+      );
+    }
+  }
+
+  return {
+    product: productCandidates[0],
+    attrs: [...new Set(attrCandidates)],
+  };
+}
+
+function isStructuredImageArray(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every(item =>
+      !!item
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && typeof (item as Record<string, unknown>).image_type === 'string'
+      && typeof (item as Record<string, unknown>).url === 'string');
 }

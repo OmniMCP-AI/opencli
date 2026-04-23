@@ -10,6 +10,12 @@ const TOOL_CHAIN_ARGS = [
   { name: 'generate-audio', help: 'Generate audio in shot videos when supported' },
 ];
 
+function applyRuntimeArgAliases(input: Record<string, unknown>, kwargs: Record<string, unknown>) {
+  if (kwargs['generate-audio'] === undefined && typeof input.generate_audio === 'boolean') {
+    kwargs['generate-audio'] = input.generate_audio;
+  }
+}
+
 cli({
   site: 'maybeai-video-app',
   name: 'run',
@@ -30,6 +36,7 @@ cli({
   func: async (_page, kwargs) => {
     const plan = buildVideoAppPlan([String(kwargs.intent ?? '')], kwargs);
     if (kwargs['dry-run']) return plan;
+    applyRuntimeArgAliases(plan.input, kwargs);
     if (plan.confidence < Number(kwargs['min-confidence'] ?? 0.3)) {
       throw new CliError(
         'ARGUMENT',

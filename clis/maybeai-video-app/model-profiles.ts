@@ -3,13 +3,13 @@ import { DEFAULT_VIDEO_MODEL, VIDEO_MODELS } from './profiles.js';
 
 export const MODEL_PROFILES = [
   {
-    model: 'fal-ai/kling-video/v2.6/pro/image-to-video',
+    model: 'fal-ai/kling-video/v3/pro/image-to-video',
     priority: 100,
     supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
     recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
   },
   {
-    model: 'fal-ai/kling-video/v3/pro/image-to-video',
+    model: 'fal-ai/kling-video/v2.6/pro/image-to-video',
     priority: 90,
     supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
     recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
@@ -37,6 +37,30 @@ export const MODEL_PROFILES = [
     priority: 50,
     supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
     recommendedFor: ['image-to-video'],
+  },
+  {
+    model: 'bytedance/seedance-2.0/fast/image-to-video',
+    priority: 40,
+    supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
+    recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
+  },
+  {
+    model: 'bytedance/seedance-2.0/fast/reference-to-video',
+    priority: 35,
+    supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
+    recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
+  },
+  {
+    model: 'bytedance/seedance-2.0/image-to-video',
+    priority: 30,
+    supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
+    recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
+  },
+  {
+    model: 'bytedance/seedance-2.0/reference-to-video',
+    priority: 25,
+    supportedRatios: ['9:16', '16:9', '4:3', '3:4', '1:1'],
+    recommendedFor: ['video-remake', 'product-ad-video', 'listing-video', 'ugc-ad-video', 'image-to-video'],
   },
 ] as const;
 

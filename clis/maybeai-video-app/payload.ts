@@ -1,5 +1,6 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { getApp } from './catalog.js';
+import { getShellFrontendFlow } from './flow-data.js';
 import { resolveVideoAppInput } from './resolver.js';
 import { getWorkflowProfile } from './workflow-profiles.js';
 import { INPUT_ARGS, readJsonObjectInput } from '../maybeai/shared/options.js';
@@ -24,6 +25,7 @@ cli({
       title: app.title,
       mode: workflow.mode,
       resolvedInput: resolved.input,
+      frontendFlow: getShellFrontendFlow(app.id),
       initialVariables: resolved.variables,
       steps: workflow.mode === 'tool-chain'
         ? [
@@ -32,26 +34,31 @@ cli({
               endpoint: '/v1/tool/video/generate',
               mode: 'copy',
               requires: ['product', 'reference_video'],
+              outputs: ['script', 'main_image_prompt', 'shots[]'],
             },
             {
               name: 'main-image',
               endpoint: '/api/v1/tool/function_call',
               toolId: 'maybe_image_generation__generate_image_from_images',
+              outputs: ['mainImage'],
             },
             {
               name: 'shot-images',
               endpoint: '/api/v1/tool/function_call',
               toolId: 'maybe_image_generation__generate_image_from_images',
+              outputs: ['generatedImages[shot_id]'],
             },
             {
               name: 'shot-videos',
               endpoint: '/api/v1/tool/function_call',
               toolId: 'maybe_text2video_generation__generate_video_from_reference_image',
+              outputs: ['generatedVideos[shot_id]'],
             },
             {
               name: 'concat',
               endpoint: '/api/v1/tool/function_call',
               toolId: 'audio_toolkit__concat_videos',
+              outputs: ['final_video'],
             },
           ]
         : workflow.mode === 'direct'

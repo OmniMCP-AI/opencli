@@ -8,6 +8,12 @@ const TOOL_CHAIN_ARGS = [
   { name: 'generate-audio', help: 'Generate audio in shot videos when supported' },
 ];
 
+function applyRuntimeArgAliases(input: Record<string, unknown>, kwargs: Record<string, unknown>) {
+  if (kwargs['generate-audio'] === undefined && typeof input.generate_audio === 'boolean') {
+    kwargs['generate-audio'] = input.generate_audio;
+  }
+}
+
 cli({
   site: 'maybeai-video-app',
   name: 'generate',
@@ -23,5 +29,9 @@ cli({
     ...WORKFLOW_ARGS,
     ...TOOL_CHAIN_ARGS,
   ],
-  func: async (_page, kwargs) => executeGenerate(String(kwargs.app), addGenerateOptions({ input: readJsonObjectInput(kwargs) }, kwargs).input as Record<string, unknown>, kwargs, !!kwargs.debug),
+  func: async (_page, kwargs) => {
+    const input = addGenerateOptions({ input: readJsonObjectInput(kwargs) }, kwargs).input as Record<string, unknown>;
+    applyRuntimeArgAliases(input, kwargs);
+    return executeGenerate(String(kwargs.app), input, kwargs, !!kwargs.debug);
+  },
 });

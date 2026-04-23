@@ -35,7 +35,7 @@ export function resolveVideoAppInput(appId: string, rawInput: Record<string, unk
   }
 
   if (inputData.duration === undefined || inputData.duration === '') {
-    const duration = platformRule?.defaultDuration ?? (app.id === 'image-to-video' ? 5 : 15);
+    const duration = platformRule?.defaultDuration ?? defaultDurationByApp(app.id);
     inputData.duration = duration;
     appliedDefaults.duration = duration;
   } else {
@@ -114,6 +114,13 @@ function normalizeAliases(rawInput: Record<string, unknown>) {
   const inputData: Record<string, unknown> = { ...rawInput };
 
   if (inputData.engine === undefined && inputData.model !== undefined) inputData.engine = inputData.model;
+  if (inputData.engine === undefined && inputData.llmModel !== undefined) inputData.engine = inputData.llmModel;
+  if (inputData.prompt === undefined && inputData.userDescription !== undefined) inputData.prompt = inputData.userDescription;
+  if (inputData.ratio === undefined && inputData.aspectRatio !== undefined) inputData.ratio = inputData.aspectRatio;
+  if (inputData.generate_audio === undefined && inputData.generateAudio !== undefined) inputData.generate_audio = inputData.generateAudio;
+  if (inputData.product === undefined) applyAlias(inputData, 'product', firstArrayValue(inputData.productImage, inputData.product_image, inputData.product_images, inputData.productImages, inputData.products));
+  if (inputData.person === undefined) applyAlias(inputData, 'person', firstArrayValue(inputData.referenceImage, inputData.reference_image, inputData.reference_images, inputData.referenceImages, inputData.people));
+  if (inputData.reference_video === undefined) applyAlias(inputData, 'reference_video', firstArrayValue(inputData.referenceVideo, inputData.reference_video_url, inputData.reference_videos, inputData.referenceVideos));
   if (inputData.product === undefined) applyAlias(inputData, 'product', firstArrayValue(inputData.product_images, inputData.productImages, inputData.products));
   if (inputData.person === undefined) applyAlias(inputData, 'person', firstArrayValue(inputData.reference_images, inputData.referenceImages, inputData.people));
   if (inputData.reference_video === undefined) applyAlias(inputData, 'reference_video', firstArrayValue(inputData.reference_videos, inputData.referenceVideos));
@@ -121,11 +128,21 @@ function normalizeAliases(rawInput: Record<string, unknown>) {
   if (inputData.style === undefined && inputData.reference_type !== undefined) inputData.style = inputData.reference_type;
 
   delete inputData.model;
+  delete inputData.llmModel;
+  delete inputData.userDescription;
+  delete inputData.aspectRatio;
+  delete inputData.generateAudio;
+  delete inputData.productImage;
+  delete inputData.product_image;
   delete inputData.product_images;
   delete inputData.productImages;
   delete inputData.products;
+  delete inputData.referenceImage;
+  delete inputData.reference_image;
   delete inputData.reference_images;
   delete inputData.referenceImages;
+  delete inputData.referenceVideo;
+  delete inputData.reference_video_url;
   delete inputData.reference_videos;
   delete inputData.referenceVideos;
   delete inputData.reference_type;
@@ -150,6 +167,11 @@ function parsePositiveNumber(value: unknown, field: string) {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new CliError('ARGUMENT', `Invalid ${field}: ${String(value)}`, `${field} must be a positive number`);
   return parsed;
+}
+
+function defaultDurationByApp(appId: string) {
+  if (appId === 'image-to-video' || appId === 'video-remake') return 5;
+  return 15;
 }
 
 function firstArrayValue(...values: unknown[]) {

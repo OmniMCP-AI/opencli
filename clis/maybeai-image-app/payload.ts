@@ -1,6 +1,6 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
-import { getApp, toWorkflowVariables } from './catalog.js';
 import { INPUT_ARGS, readJsonObjectInput } from './common.js';
+import { resolveImageAppInput } from './resolver.js';
 
 cli({
   site: 'maybeai-image-app',
@@ -14,12 +14,13 @@ cli({
     ...INPUT_ARGS,
   ],
   func: async (_page, kwargs) => {
-    const app = getApp(String(kwargs.app));
+    const resolved = resolveImageAppInput(String(kwargs.app), readJsonObjectInput(kwargs));
     return {
-      app: app.id,
-      title: app.title,
-      variables: toWorkflowVariables(app, readJsonObjectInput(kwargs)),
-      outputSchema: app.output,
+      app: resolved.app,
+      title: resolved.title,
+      input: resolved.input,
+      variables: resolved.variables,
+      outputSchema: resolved.outputSchema,
     };
   },
 });

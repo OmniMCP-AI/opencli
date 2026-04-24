@@ -10,6 +10,7 @@ OpenCLI supports downloading images, videos, and articles from supported platfor
 | **bilibili** | Videos | Requires `yt-dlp` installed |
 | **twitter** | Images, Videos | Downloads from user media tab or single tweet |
 | **douban** | Images | Downloads poster / still image lists from movie subjects |
+| **shopee** | Review export (CSV) | Exports Shopdora review data from a Shopee product page |
 | **zhihu** | Articles (Markdown) | Exports articles with optional image download |
 | **weixin** | Articles (Markdown) | Exports WeChat Official Account articles |
 
@@ -42,6 +43,9 @@ opencli twitter download --tweet-url "https://x.com/user/status/123" --output ./
 
 # Download Douban posters / stills
 opencli douban download 30382501 --output ./douban
+
+# Export Shopee Shopdora review data
+opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f json
 
 # Export Zhihu article to Markdown
 opencli zhihu download "https://zhuanlan.zhihu.com/p/xxx" --output ./zhihu

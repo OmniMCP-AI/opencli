@@ -135,6 +135,7 @@ git clone git@github.com:jackwener/opencli.git && cd opencli && npm install && n
 | **zhihu** | `hot` `search` `question` `download` `follow` `like` `favorite` `comment` `answer` |
 | **amazon** | `bestsellers` `search` `product` `offer` `discussion` `movers-shakers` `new-releases` |
 | **1688** | `search` `item` `assets` `download` `store` |
+| **shopee** | `product` `product-shopdora-download` |
 | **gemini** | `new` `ask` `image` `deep-research` `deep-research-result` |
 | **yuanbao** | `new` `ask` |
 | **notebooklm** | `status` `list` `open` `current` `get` `history` `summary` `note-list` `notes-get` `source-list` `source-get` `source-fulltext` `source-guide` |
@@ -144,6 +145,8 @@ git clone git@github.com:jackwener/opencli.git && cd opencli && npm install && n
 | **quark** | `ls` `mkdir` `mv` `rename` `rm` `save` `share-tree` |
 
 79+ adapters in total — **[→ see all supported sites & commands](./docs/adapters/index.md)**
+
+Shopee template sync: `extractProductDetailFromShopee` maps to `opencli shopee product`, and `exportReviewDataFromShopee` maps to `opencli shopee product-shopdora-download`.
 
 ## CLI Hub
 
@@ -194,6 +197,7 @@ OpenCLI supports downloading images, videos, and articles from supported platfor
 | **douban** | Images | Poster / still image lists |
 | **pixiv** | Images | Original-quality illustrations, multi-page |
 | **1688** | Images, Videos | Downloads page-visible product media from item pages |
+| **shopee** | Review export (CSV) | Exports Shopdora review data from a Shopee product page |
 | **zhihu** | Articles (Markdown) | Exports with optional image download |
 | **weixin** | Articles (Markdown) | WeChat Official Account articles |
 
@@ -204,6 +208,7 @@ opencli xiaohongshu download abc123 --output ./xhs
 opencli bilibili download BV1xxx --output ./bilibili
 opencli twitter download elonmusk --limit 20 --output ./twitter
 opencli 1688 download 841141931191 --output ./1688-downloads
+opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f json
 ```
 
 ## Output Formats

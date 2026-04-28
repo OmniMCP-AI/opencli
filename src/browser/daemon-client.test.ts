@@ -4,6 +4,7 @@ import {
   fetchDaemonStatus,
   getDaemonHealth,
   requestDaemonShutdown,
+  sendCommand,
 } from './daemon-client.js';
 
 describe('daemon-client', () => {
@@ -23,7 +24,6 @@ describe('daemon-client', () => {
       extensionConnected: true,
       extensionVersion: '1.2.3',
       pending: 0,
-      lastCliRequestTime: Date.now(),
       memoryMB: 32,
       port: 19825,
     };
@@ -75,7 +75,6 @@ describe('daemon-client', () => {
       uptime: 10,
       extensionConnected: false,
       pending: 0,
-      lastCliRequestTime: Date.now(),
       memoryMB: 16,
       port: 19825,
     };
@@ -94,9 +93,7 @@ describe('daemon-client', () => {
       uptime: 10,
       extensionConnected: true,
       extensionVersion: '1.2.3',
-      extensionExpected: true,
       pending: 0,
-      lastCliRequestTime: Date.now(),
       memoryMB: 32,
       port: 19825,
     };
@@ -108,27 +105,49 @@ describe('daemon-client', () => {
     await expect(getDaemonHealth()).resolves.toEqual({ state: 'ready', status });
   });
 
-  it('treats a connected but mismatched extension id as no-extension', async () => {
-    const status = {
-      ok: true,
-      pid: 123,
-      uptime: 10,
-      extensionConnected: true,
-      extensionVersion: '1.2.3',
-      extensionId: 'wrongwrongwrongwrongwrongwrongwr',
-      expectedExtensionId: 'gjfgacldoekdalepfgdonkjfngmliogc',
-      extensionExpected: false,
-      lastRejectedExtensionId: 'wrongwrongwrongwrongwrongwrongwr',
-      pending: 0,
-      lastCliRequestTime: Date.now(),
-      memoryMB: 32,
-      port: 19825,
-    };
+  it('sendCommand includes the current pid in generated command ids', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_763_000_000_000);
     vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(status),
+      status: 200,
+      json: () => Promise.resolve({ id: 'server', ok: true, data: 'ok' }),
     } as Response);
 
-    await expect(getDaemonHealth()).resolves.toEqual({ state: 'no-extension', status });
+    await expect(sendCommand('exec', { code: '1 + 1' })).resolves.toBe('ok');
+    await expect(sendCommand('exec', { code: '2 + 2' })).resolves.toBe('ok');
+
+    const ids = vi.mocked(fetch).mock.calls.map(([, init]) => {
+      const body = JSON.parse(String(init?.body)) as { id: string };
+      return body.id;
+    });
+
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toMatch(new RegExp(`^cmd_${process.pid}_1763000000000_\\d+$`));
+    expect(ids[1]).toMatch(new RegExp(`^cmd_${process.pid}_1763000000000_\\d+$`));
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it('sendCommand retries with a new id when daemon reports a duplicate pending id', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_763_000_000_123);
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: () => Promise.resolve({ ok: false, error: 'Duplicate command id already pending; retry' }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: 'server', ok: true, data: 42 }),
+      } as Response);
+
+    await expect(sendCommand('exec', { code: '6 * 7' })).resolves.toBe(42);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const ids = fetchMock.mock.calls.map(([, init]) => {
+      const body = JSON.parse(String(init?.body)) as { id: string };
+      return body.id;
+    });
+    expect(ids[0]).not.toBe(ids[1]);
   });
 });

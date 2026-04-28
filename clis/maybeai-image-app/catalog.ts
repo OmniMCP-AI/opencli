@@ -518,6 +518,11 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
   const attrCandidates: string[] = [];
 
   for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      if (productCandidates.length === 0) productCandidates.push(item.trim());
+      else attrCandidates.push(item.trim());
+      continue;
+    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const record = item as Record<string, unknown>;
     if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
@@ -540,6 +545,11 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
 
 function readLegacyProductAndSizeChart(value: unknown): { product?: string; sizeChart?: string } {
   if (!Array.isArray(value)) return {};
+
+  const rawUrls = value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+  if (rawUrls.length >= 2) return { product: rawUrls[0], sizeChart: rawUrls[1] };
 
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;

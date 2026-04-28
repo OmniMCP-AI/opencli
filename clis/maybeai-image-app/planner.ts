@@ -271,6 +271,19 @@ function buildInput(intent: string, kwargs: Record<string, unknown>): Record<str
 }
 
 function normalizeSelectedAppInput(appId: AppId, input: Record<string, unknown>, intent: string, kwargs: Record<string, unknown>): void {
+  if (appId !== 'replica-listing-image') delete input.image_group_type;
+
+  if (usesSingleProduct(appId) && !hasValue(input.product)) {
+    const primaryProduct = firstString(
+      kwargs.product,
+      readStringArray(input.products)[0],
+      splitList(firstString(kwargs.products))[0],
+    );
+    if (primaryProduct) input.product = primaryProduct;
+  }
+
+  if (usesSingleProduct(appId)) delete input.products;
+
   if (appId === 'replica-listing-image') {
     if (!isStructuredImageArray(input.product_images)) {
       const candidateUrls = uniqueUrls([
@@ -314,9 +327,32 @@ function normalizeSelectedAppInput(appId: AppId, input: Record<string, unknown>,
   if (['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
     if (!isStructuredImageArray(input.product_and_attrs)) {
       const legacy = readLegacyProductAndAttrs(input.product_and_attrs);
-      const product = firstString(kwargs.product, legacy.product);
-      const attrs = splitList(firstString(kwargs.attrs)).length > 0 ? splitList(firstString(kwargs.attrs)) : legacy.attrs;
+      const product = firstString(
+        kwargs.product,
+        legacy.product,
+        readStringArray(input.products)[0],
+        splitList(firstString(kwargs.products))[0],
+      );
+      const attrs = splitList(firstString(kwargs.attrs)).length > 0
+        ? splitList(firstString(kwargs.attrs))
+        : legacy.attrs;
       if (product) input.product_and_attrs = buildStructuredProductAndAttrs(product, attrs);
+    }
+    delete input.product;
+    delete input.products;
+  }
+
+  if (appId === 'gen-size-compare') {
+    if (!isStructuredImageArray(input.product_and_size_chart)) {
+      const legacy = readLegacyProductAndSizeChart(input.product_and_size_chart);
+      const product = firstString(
+        kwargs.product,
+        legacy.product,
+        readStringArray(input.products)[0],
+        splitList(firstString(kwargs.products))[0],
+      );
+      const sizeChart = firstString(kwargs['size-chart'], legacy.sizeChart);
+      if (product && sizeChart) input.product_and_size_chart = buildStructuredProductAndAttrs(product, [sizeChart]);
     }
     delete input.product;
     delete input.products;
@@ -436,13 +472,17 @@ function routeDataframeImages(appId: AppId, input: Record<string, unknown>, urls
     return;
   }
 
-  const product = firstString(kwargs.product) ?? urls[0];
+  const product = firstString(
+    kwargs.product,
+    readStringArray(input.products)[0],
+    splitList(firstString(kwargs.products))[0],
+  ) ?? urls[0];
   const attrs = splitList(firstString(kwargs.attrs)).length > 0 ? splitList(firstString(kwargs.attrs)) : urls.slice(1);
   const sizeChart = firstString(kwargs['size-chart']) ?? urls[1];
 
   if (appId === 'gen-size-compare' && !hasValue(input.product_and_size_chart) && product && sizeChart) {
     input.product_and_size_chart = buildStructuredProductAndAttrs(product, [sizeChart]);
-  } else if (!hasValue(input.product_and_attrs) && product) {
+  } else if (appId !== 'gen-size-compare' && !hasValue(input.product_and_attrs) && product) {
     input.product_and_attrs = buildStructuredProductAndAttrs(product, attrs);
   }
 }
@@ -466,6 +506,10 @@ function requiresDataframe(appId: AppId): boolean {
 
 function usesProductList(appId: AppId): boolean {
   return ['try-on', 'change-model', 'mix-match', 'change-product', 'gen-main', 'gen-scene', 'gen-multi-angles', 'remove-background', 'remove-watermark', 'remove-face'].includes(appId);
+}
+
+function usesSingleProduct(appId: AppId): boolean {
+  return ['change-action', 'change-background', 'pattern-extraction', 'pattern-fission', 'scene-fission', '3d-from-2d', 'product-modification', 'change-color'].includes(appId);
 }
 
 function fieldBoost(field: string, appId: AppId): number {
@@ -660,6 +704,11 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
   const productCandidates: string[] = [];
   const attrCandidates: string[] = [];
   for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      if (productCandidates.length === 0) productCandidates.push(item.trim());
+      else attrCandidates.push(item.trim());
+      continue;
+    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const record = item as Record<string, unknown>;
     if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
@@ -678,6 +727,29 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
     product: productCandidates[0],
     attrs: [...new Set(attrCandidates)],
   };
+}
+
+function readLegacyProductAndSizeChart(value: unknown): { product?: string; sizeChart?: string } {
+  if (!Array.isArray(value)) return {};
+
+  const rawUrls = value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+  if (rawUrls.length >= 2) return { product: rawUrls[0], sizeChart: rawUrls[1] };
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const product = typeof record.product_image_url === 'string' && record.product_image_url.trim()
+      ? record.product_image_url.trim()
+      : undefined;
+    const sizeChart = typeof record.reference_image_url === 'string' && record.reference_image_url.trim()
+      ? record.reference_image_url.trim()
+      : undefined;
+    if (product && sizeChart) return { product, sizeChart };
+  }
+
+  return {};
 }
 
 

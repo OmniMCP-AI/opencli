@@ -152,6 +152,11 @@ function readRatio(value: unknown) {
 }
 
 function canonicalizeAppInput(appId: string, inputData: Record<string, unknown>) {
+  if (usesSingleProduct(appId) && !hasValue(inputData.product)) {
+    const product = readStringArray(inputData.products)[0];
+    if (product) inputData.product = product;
+  }
+
   if (['gen-details', 'details-selling-points', 'add-selling-points'].includes(appId)) {
     if (!isStructuredImageArray(inputData.product_and_attrs)) {
       const legacy = readLegacyProductAndAttrs(inputData.product_and_attrs);
@@ -226,6 +231,11 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
   const attrCandidates: string[] = [];
 
   for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      if (productCandidates.length === 0) productCandidates.push(item.trim());
+      else attrCandidates.push(item.trim());
+      continue;
+    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const record = item as Record<string, unknown>;
     if (typeof record.product_image_url === 'string' && record.product_image_url.trim()) {
@@ -248,6 +258,11 @@ function readLegacyProductAndAttrs(value: unknown): { product?: string; attrs: s
 
 function readLegacyProductAndSizeChart(value: unknown): { product?: string; sizeChart?: string } {
   if (!Array.isArray(value)) return {};
+
+  const rawUrls = value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+  if (rawUrls.length >= 2) return { product: rawUrls[0], sizeChart: rawUrls[1] };
 
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
@@ -273,4 +288,19 @@ function isStructuredImageArray(value: unknown): boolean {
       && !Array.isArray(item)
       && typeof (item as Record<string, unknown>).image_type === 'string'
       && typeof (item as Record<string, unknown>).url === 'string');
+}
+
+function usesSingleProduct(appId: string): boolean {
+  return ['change-action', 'change-background', 'pattern-extraction', 'pattern-fission', 'scene-fission', '3d-from-2d', 'product-modification', 'change-color'].includes(appId);
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim());
+}
+
+function hasValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return false;
+  if (Array.isArray(value) && value.length === 0) return false;
+  return true;
 }

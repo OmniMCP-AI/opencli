@@ -112,4 +112,86 @@ describe('maybeai-image-app planner', () => {
       },
     ]);
   });
+
+  it('does not leak image_group_type into gen-details when intent contains detail keywords', () => {
+    const plan = buildImageAppPlan(['gen-details'], {
+      app: 'gen-details',
+      input: JSON.stringify({
+        product_and_attrs: ['https://example.com/product.jpg'],
+        platform: 'Shopee',
+        market: 'Southeast Asia',
+      }),
+    });
+
+    expect(plan.missingFields).toEqual([]);
+    expect(plan.input).toEqual({
+      product_and_attrs: [
+        {
+          image_type: 'product_image_url',
+          url: 'https://example.com/product.jpg',
+          description: '商品图片',
+        },
+      ],
+      platform: 'Shopee',
+      market: 'Southeast Asia',
+    });
+  });
+
+  it('builds gen-details input from --products when only a single product image is provided', () => {
+    const plan = buildImageAppPlan(['gen-details'], {
+      app: 'gen-details',
+      products: 'https://example.com/product.jpg',
+      platform: 'Shopee',
+      market: 'Southeast Asia',
+    });
+
+    expect(plan.missingFields).toEqual([]);
+    expect(plan.input).toEqual({
+      product_and_attrs: [
+        {
+          image_type: 'product_image_url',
+          url: 'https://example.com/product.jpg',
+          description: '商品图片',
+        },
+      ],
+      platform: 'Shopee',
+      market: 'Southeast Asia',
+    });
+  });
+
+  it('builds single-product apps from --products by taking the first image as product', () => {
+    const plan = buildImageAppPlan(['换场景'], {
+      app: 'change-background',
+      products: 'https://example.com/product.jpg',
+      scene: 'https://example.com/scene.jpg',
+    });
+
+    expect(plan.missingFields).toEqual([]);
+    expect(plan.input).toEqual({
+      product: 'https://example.com/product.jpg',
+      scene: 'https://example.com/scene.jpg',
+    });
+  });
+
+  it('builds gen-size-compare from --products plus --size-chart', () => {
+    const plan = buildImageAppPlan(['尺码对比图'], {
+      app: 'gen-size-compare',
+      products: 'https://example.com/product.jpg',
+      'size-chart': 'https://example.com/size-chart.jpg',
+    });
+
+    expect(plan.missingFields).toEqual([]);
+    expect(plan.input.product_and_size_chart).toEqual([
+      {
+        image_type: 'product_image_url',
+        url: 'https://example.com/product.jpg',
+        description: '商品图片',
+      },
+      {
+        image_type: 'product_attribute_url',
+        url: 'https://example.com/size-chart.jpg',
+        description: '商品属性图片',
+      },
+    ]);
+  });
 });

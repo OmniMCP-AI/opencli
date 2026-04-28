@@ -61,6 +61,16 @@ opencli hackernews top --limit 5
 opencli bilibili hot --limit 5
 ```
 
+### 5. 试一下 Shopee 命令
+
+```bash
+opencli shopee search "wireless earbuds" --origin https://shopee.sg --limit 10 -f json
+opencli shopee product "https://shopee.sg/...-i.123.456" -f json
+opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f json
+```
+
+更多 Shopee 说明见：[`docs/adapters/browser/shopee.md`](./docs/adapters/browser/shopee.md)
+
 ## 给人类用户
 
 如果你只是想稳定地调用网站或桌面应用能力，主路径很简单：
@@ -246,6 +256,7 @@ npm link
 | **wanfang** | `search` | 公开 |
 | **xiaoyuzhou** | `podcast*` `podcast-episodes*` `episode*` `download*` `transcript*` `auth` | 本地凭证 |
 | **zhihu** | `hot` `search` `question` `download` `follow` `like` `favorite` `comment` `answer` | 浏览器 |
+| **shopee** | `search` `product` `product-shopdora-download` | 浏览器 |
 | **weixin** | `download` | 浏览器 |
 | **youtube** | `search` `video` `transcript` `comments` `channel` `playlist` `feed` `history` `watch-later` `subscriptions` `like` `unlike` `subscribe` `unsubscribe` | 浏览器 |
 | **boss** | `search` `detail` `recommend` `joblist` `greet` `batchgreet` `send` `chatlist` `chatmsg` `invite` `mark` `exchange` `resume` `stats` | 浏览器 |

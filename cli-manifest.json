@@ -14204,6 +14204,38 @@
   },
   {
     "site": "shopee",
+    "name": "product-sku",
+    "description": "Get Shopee SKU stock by clicking enabled variation buttons on a product page",
+    "domain": "shopee.sg",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Shopee product URL, e.g. https://shopee.sg/...-i.123.456"
+      }
+    ],
+    "columns": [
+      "product_url",
+      "title",
+      "shopee_current_price",
+      "group_count",
+      "group_names",
+      "option_labels",
+      "sku",
+      "stock",
+      "stock_source"
+    ],
+    "type": "js",
+    "modulePath": "shopee/product-sku.js",
+    "sourceFile": "shopee/product-sku.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "shopee",
     "name": "search",
     "description": "Search Shopee products and output product links",
     "domain": "shopee.com.my",

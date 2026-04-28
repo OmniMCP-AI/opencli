@@ -68,6 +68,7 @@ opencli bilibili hot --limit 5
 ```bash
 opencli shopee search "wireless earbuds" --origin https://shopee.sg --limit 10 -f json
 opencli shopee product "https://shopee.sg/...-i.123.456" -f json
+opencli shopee product-sku "https://shopee.sg/...-i.123.456" -f json
 opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f json
 ```
 
@@ -236,7 +237,7 @@ To load the source Browser Bridge extension:
 | **twitter** | `trending` `search` `timeline` `tweets` `lists` `list-tweets` `list-add` `list-remove` `bookmarks` `post` `download` `profile` `article` `like` `likes` `notifications` `reply` `reply-dm` `thread` `follow` `unfollow` `followers` `following` `block` `unblock` `bookmark` `unbookmark` `delete` `hide-reply` `accept` |
 | **reddit** | `hot` `frontpage` `popular` `search` `subreddit` `read` `user` `user-posts` `user-comments` `upvote` `upvoted` `save` `saved` `comment` `subscribe` |
 | **zhihu** | `hot` `search` `question` `download` `follow` `like` `favorite` `comment` `answer` |
-| **shopee** | `search` `product` `product-shopdora-download` |
+| **shopee** | `search` `product` `product-sku` `product-shopdora-download` |
 | **amazon** | `bestsellers` `search` `product` `offer` `discussion` `movers-shakers` `new-releases` `rankings` |
 | **1688** | `search` `item` `assets` `download` `store` |
 | **gitee** | `trending` `search` `user` |

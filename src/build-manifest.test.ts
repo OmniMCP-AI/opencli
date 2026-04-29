@@ -157,4 +157,48 @@ describe('manifest helper rules', () => {
     getRegistry().delete(screenKey);
     getRegistry().delete(statusKey);
   });
+
+  it('extracts static cli metadata without importing the module', async () => {
+    const site = `manifest-static-${Date.now()}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-manifest-'));
+    tempDirs.push(dir);
+    const file = path.join(dir, `${site}.js`);
+    fs.writeFileSync(file, `
+import { cli, Strategy } from '@jackwener/opencli/registry';
+import { downloadMedia } from '@jackwener/opencli/download/media-download';
+
+cli({
+  site: '${site}',
+  name: 'download',
+  description: 'download assets',
+  strategy: Strategy.COOKIE,
+  args: [
+    { name: 'input', positional: true, required: true, help: 'target URL' },
+    { name: 'output', default: './downloads', help: 'output directory' },
+  ],
+  columns: ['index', 'status'],
+  func: async () => downloadMedia([], {}),
+});
+`);
+
+    const entries = await loadManifestEntries(file, site, async () => {
+      throw new Error('importer should not be called for statically extractable modules');
+    });
+
+    expect(entries).toMatchObject([
+      {
+        site,
+        name: 'download',
+        description: 'download assets',
+        strategy: 'cookie',
+        browser: true,
+        args: [
+          expect.objectContaining({ name: 'input', positional: true, required: true }),
+          expect.objectContaining({ name: 'output', default: './downloads' }),
+        ],
+        columns: ['index', 'status'],
+        type: 'js',
+      },
+    ]);
+  });
 });

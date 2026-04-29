@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getErrorMessage } from './errors.js';
 import { fullName, getRegistry, type CliCommand } from './registry.js';
 import { findPackageRoot, getCliManifestPath } from './package-paths.js';
+import { extractStaticCliCommands } from './static-cli.js';
 
 const PACKAGE_ROOT = findPackageRoot(fileURLToPath(import.meta.url));
 const CLIS_DIR = path.join(PACKAGE_ROOT, 'clis');
@@ -118,6 +119,14 @@ export async function loadManifestEntries(
     if (!CLI_MODULE_PATTERN.test(src)) return [];
 
     const modulePath = toModulePath(filePath, site);
+    const sourceRelative = path.relative(CLIS_DIR, filePath);
+    const staticCommands = extractStaticCliCommands(src, filePath, site);
+    if (staticCommands?.length) {
+      return staticCommands
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(cmd => toManifestEntry(cmd, modulePath, sourceRelative));
+    }
+
     const registry = getRegistry();
     const before = new Map(registry.entries());
     const mod = await importer(pathToFileURL(filePath).href);
@@ -134,9 +143,6 @@ export async function loadManifestEntries(
           return !previous || previous !== cmd;
         })
         .map(([, cmd]) => cmd);
-
-    // Resolve sourceFile relative to clis/.
-    const sourceRelative = path.relative(CLIS_DIR, filePath);
 
     const seen = new Set<string>();
     return runtimeCommands

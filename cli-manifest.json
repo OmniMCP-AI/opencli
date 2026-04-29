@@ -10624,8 +10624,8 @@
       "url"
     ],
     "type": "js",
-    "modulePath": "linux-do/categories.js",
-    "sourceFile": "linux-do/categories.js",
+    "modulePath": "linux-do/feed.js",
+    "sourceFile": "linux-do/feed.js",
     "navigateBefore": "https://linux.do"
   },
   {
@@ -14181,6 +14181,7 @@
     ],
     "columns": [
       "step",
+      "status",
       "page_type",
       "title",
       "visited_url",
@@ -14318,6 +14319,7 @@
       "stock",
       "stock_source"
     ],
+    "timeout": 600,
     "type": "js",
     "modulePath": "shopee/product-sku.js",
     "sourceFile": "shopee/product-sku.js",
@@ -18533,8 +18535,8 @@
       "url"
     ],
     "type": "js",
-    "modulePath": "xiaohongshu/creator-notes-summary.js",
-    "sourceFile": "xiaohongshu/creator-notes-summary.js",
+    "modulePath": "xiaohongshu/creator-notes.js",
+    "sourceFile": "xiaohongshu/creator-notes.js",
     "navigateBefore": false
   },
   {

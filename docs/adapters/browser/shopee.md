@@ -67,6 +67,7 @@ opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f js
 - `product` returns page-visible Shopee fields even if Shopdora is not logged in. In that case `shopdora_login_message` will be populated.
 - `product-sku` outputs one row per selected SKU combination. Fields include `sku`, `stock`, `stock_source`, plus JSON-encoded `group_names` and `option_labels` for the clicked selection path.
 - `product-sku` prefers live API stock from `https://shopee.sg/api/v4/pdp/cart_panel/select_variation_pc`; if the Browser Bridge cannot expose network capture for the initial default selection, it falls back to the visible stock text currently rendered on the page.
+- `product-sku` has a 10-minute adapter timeout, and it only waits briefly for selection/capture on each click, because exhaustive variant traversal on multi-option listings routinely exceeds the global 60-second default.
 - `product-shopdora-download` opens the export dialog, shifts the time-period start date from the current value by `-3 months + 7 days`, enables the review-image detail filter when available, and waits for the CSV download to finish.
 - The download command has a long timeout because Shopdora export generation can be slow.
 - Output fields for the download flow include `status`, `message`, `local_url`, `local_path`, `product_url`, and `shopdora_login_message`.

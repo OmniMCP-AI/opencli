@@ -1,11 +1,16 @@
 import { ArgumentError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
+import { bindCurrentTab } from '@jackwener/opencli/browser/daemon-client';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { simulateHumanBehavior, waitRandomDuration } from './shared.js';
 
 const VARIATION_API_PATTERN = '/api/v4/pdp/cart_panel/select_variation_pc';
 const VARIANT_GROUP_SELECTOR = '.j7HL5Q';
-const VARIANT_CLICK_DELAY_RANGE_MS = [500, 2000];
+const VARIANT_CLICK_DELAY_RANGE_MS = [200, 600];
 const SHOPEE_API_PRICE_SCALE = 100000;
+const VARIANT_SELECTION_TIMEOUT_SECONDS = 1;
+const VARIATION_CAPTURE_TIMEOUT_SECONDS = 1;
+const SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS = 10 * 60;
+const SHOPEE_WORKSPACE = 'site:shopee';
 const PRODUCT_STOCK_COLUMNS = [
   'product_url',
   'title',
@@ -210,8 +215,18 @@ function upsertStockRow(rowsByKey, row) {
   }
 }
 
-async function ensureShopeeProductPage(page, productUrl) {
+async function ensureShopeeProductPage(page, productUrl, bindFn = bindCurrentTab) {
+  await bindShopeeProductTab(productUrl, bindFn);
   await page.goto(productUrl, { waitUntil: 'load' });
+}
+
+async function bindShopeeProductTab(productUrl, bindFn = bindCurrentTab) {
+  try {
+    await bindFn(SHOPEE_WORKSPACE, { matchUrl: productUrl });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function prepareVariationCapture(page) {
@@ -385,7 +400,7 @@ async function drainVariationCaptures(page, captureMode) {
     .filter((entry) => entry.payload);
 }
 
-async function waitForVariationCapture(page, captureMode, timeoutSeconds = 5) {
+async function waitForVariationCapture(page, captureMode, timeoutSeconds = VARIATION_CAPTURE_TIMEOUT_SECONDS) {
   const deadline = Date.now() + (timeoutSeconds * 1000);
   while (Date.now() < deadline) {
     const captures = await drainVariationCaptures(page, captureMode);
@@ -397,7 +412,7 @@ async function waitForVariationCapture(page, captureMode, timeoutSeconds = 5) {
   return null;
 }
 
-async function waitForSelectedLabel(page, groupIndex, expectedLabel, timeoutSeconds = 5) {
+async function waitForSelectedLabel(page, groupIndex, expectedLabel, timeoutSeconds = VARIANT_SELECTION_TIMEOUT_SECONDS) {
   const wanted = normalizeText(expectedLabel);
   const deadline = Date.now() + (timeoutSeconds * 1000);
 
@@ -492,6 +507,7 @@ cli({
   domain: 'shopee.sg',
   strategy: Strategy.COOKIE,
   navigateBefore: false,
+  timeoutSeconds: SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS,
   args: [
     {
       name: 'url',
@@ -549,6 +565,9 @@ cli({
 
 export const __test__ = {
   PRODUCT_STOCK_COLUMNS,
+  SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS,
+  VARIANT_SELECTION_TIMEOUT_SECONDS,
+  VARIATION_CAPTURE_TIMEOUT_SECONDS,
   VARIATION_API_PATTERN,
   VARIANT_CLICK_DELAY_RANGE_MS,
   buildSelectionKey,
@@ -561,4 +580,6 @@ export const __test__ = {
   parseVariationCaptureEntry,
   sortOptionsForTraversal,
   upsertStockRow,
+  bindShopeeProductTab,
+  ensureShopeeProductPage,
 };

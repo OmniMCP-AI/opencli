@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getRegistry } from '@jackwener/opencli/registry';
 import './product-sku.js';
 
 const {
   PRODUCT_STOCK_COLUMNS,
+  SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS,
+  VARIANT_SELECTION_TIMEOUT_SECONDS,
+  VARIATION_CAPTURE_TIMEOUT_SECONDS,
   VARIATION_API_PATTERN,
   VARIANT_CLICK_DELAY_RANGE_MS,
   buildSelectionKey,
@@ -16,6 +19,8 @@ const {
   parseVariationCaptureEntry,
   sortOptionsForTraversal,
   upsertStockRow,
+  bindShopeeProductTab,
+  ensureShopeeProductPage,
 } = await import('./product-sku.js').then((m) => m.__test__);
 
 describe('shopee product-sku adapter', () => {
@@ -28,6 +33,7 @@ describe('shopee product-sku adapter', () => {
     expect(command.domain).toBe('shopee.sg');
     expect(command.strategy).toBe('cookie');
     expect(command.navigateBefore).toBe(false);
+    expect(command.timeoutSeconds).toBe(SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS);
     expect(typeof command.func).toBe('function');
   });
 
@@ -53,8 +59,14 @@ describe('shopee product-sku adapter', () => {
     expect(command.columns).toEqual(PRODUCT_STOCK_COLUMNS);
   });
 
-  it('uses a randomized 0.5s to 2s delay before each variant click', () => {
-    expect(VARIANT_CLICK_DELAY_RANGE_MS).toEqual([500, 2000]);
+  it('uses a short randomized delay before each variant click', () => {
+    expect(VARIANT_CLICK_DELAY_RANGE_MS).toEqual([200, 600]);
+  });
+
+  it('uses shorter per-click waits and a longer command timeout for exhaustive SKU traversal', () => {
+    expect(VARIANT_SELECTION_TIMEOUT_SECONDS).toBe(1);
+    expect(VARIATION_CAPTURE_TIMEOUT_SECONDS).toBe(1);
+    expect(SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS).toBe(600);
   });
 });
 
@@ -129,5 +141,32 @@ describe('shopee product-sku helpers', () => {
 
     expect(buildSelectionKey(['Black', '1m'])).toBe(JSON.stringify(['Black', '1m']));
     expect([...rowsByKey.values()]).toEqual([apiRow]);
+  });
+
+  it('binds to the matching existing browser tab using the shopee workspace', async () => {
+    const bindFn = vi.fn(async () => ({ tabId: 2 }));
+
+    await expect(
+      bindShopeeProductTab(
+        'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+        bindFn,
+      ),
+    ).resolves.toBe(true);
+
+    expect(bindFn).toHaveBeenCalledWith('site:shopee', {
+      matchUrl: 'https://shopee.sg/Jeep-EW121-True-Wireless-Bluetooth-5.4-Earbuds-i.1058254930.25483790400',
+    });
+  });
+
+  it('reuses the matched tab and reloads the product page', async () => {
+    const page = {
+      goto: vi.fn(async () => {}),
+    };
+    const bindFn = vi.fn(async () => ({ tabId: 2 }));
+
+    await expect(ensureShopeeProductPage(page, 'https://shopee.sg/product-i.1.2', bindFn)).resolves.toBeUndefined();
+
+    expect(page.goto).toHaveBeenCalledTimes(1);
+    expect(page.goto).toHaveBeenCalledWith('https://shopee.sg/product-i.1.2', { waitUntil: 'load' });
   });
 });

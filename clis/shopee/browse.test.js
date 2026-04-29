@@ -378,6 +378,34 @@ describe('shopee browse execution', () => {
     ]);
   });
 
+  it('returns status unlogin even when the not-logged-in page has no title heading', async () => {
+    const command = getRegistry().get('shopee/browse');
+    const domByUrl = {
+      'https://mock.shopee.test/search?keyword=camera': createDom(`
+        <html data-opencli-mock="true">
+          <body>
+            <div>Looks like you’re not logged in yet.</div>
+            <div>Log in to continue or head back to the homepage.</div>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/search?keyword=camera'),
+    };
+    const page = createBrowsePageMock(domByUrl);
+
+    await expect(command.func(page, {
+      url: 'https://mock.shopee.test/search?keyword=camera',
+      steps: 3,
+      mock: true,
+    })).resolves.toEqual([
+      expect.objectContaining({
+        step: 1,
+        status: 'unlogin',
+        title: 'Page Unavailable',
+        visited_url: 'https://mock.shopee.test/search?keyword=camera',
+      }),
+    ]);
+  });
+
   it('stops immediately when the page exposes the NEW_CAPTCHA read error', async () => {
     const command = getRegistry().get('shopee/browse');
     const domByUrl = {

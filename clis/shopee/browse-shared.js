@@ -152,12 +152,19 @@ export function detectBrowsePageIssue(document) {
     || '',
   );
   const normalizedUnavailableTitle = unavailableTitle.toLowerCase();
+  const isUnavailableLoginWall = (
+    /not logged in yet/.test(normalizedBodyText)
+    || /log in to continue/.test(normalizedBodyText)
+  ) && /head back to the homepage/.test(normalizedBodyText);
   if (
-    /page unavailable/.test(normalizedUnavailableTitle)
-    && (
-      /not logged in yet/.test(normalizedBodyText)
-      || /log in to continue/.test(normalizedBodyText)
-      || /head back to the homepage/.test(normalizedBodyText)
+    isUnavailableLoginWall
+    || (
+      /page unavailable/.test(normalizedUnavailableTitle)
+      && (
+        /not logged in yet/.test(normalizedBodyText)
+        || /log in to continue/.test(normalizedBodyText)
+        || /head back to the homepage/.test(normalizedBodyText)
+      )
     )
   ) {
     return {

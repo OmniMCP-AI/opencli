@@ -144,6 +144,30 @@ export function readPageTitle(document) {
 }
 
 export function detectBrowsePageIssue(document) {
+  const bodyText = normalizeText(document?.body?.textContent || '');
+  const normalizedBodyText = bodyText.toLowerCase();
+  const unavailableTitle = normalizeText(
+    document?.querySelector?.('h1')?.textContent
+    || document?.title
+    || '',
+  );
+  const normalizedUnavailableTitle = unavailableTitle.toLowerCase();
+  if (
+    /page unavailable/.test(normalizedUnavailableTitle)
+    && (
+      /not logged in yet/.test(normalizedBodyText)
+      || /log in to continue/.test(normalizedBodyText)
+      || /head back to the homepage/.test(normalizedBodyText)
+    )
+  ) {
+    return {
+      code: 'unlogin',
+      title: unavailableTitle || 'Page Unavailable',
+      message: bodyText || 'Looks like you are not logged in yet. Log in to continue or head back to the homepage.',
+      retryLabel: '',
+    };
+  }
+
   const blocker = document?.querySelector?.('#NEW_CAPTCHA');
   if (blocker) {
     const title = normalizeText(

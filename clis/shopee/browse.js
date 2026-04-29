@@ -100,13 +100,29 @@ export async function runBrowseSession(page, args, options = {}) {
     emitBrowseActionLog(actionLog, 'inspect_start', { step, limit: inspectLimit });
     const payload = await inspectCurrentPage(page, currentUrl, inspectLimit);
     if (payload.issue) {
+      const issueCode = payload.issue.code || 'page_issue';
       emitBrowseActionLog(actionLog, 'status', {
-        value: 'not_ok',
-        reason: payload.issue.code || 'page_issue',
+        value: issueCode === 'unlogin' ? 'unlogin' : 'not_ok',
+        reason: issueCode,
       });
+      if (issueCode === 'unlogin') {
+        rows.push({
+          step,
+          status: 'unlogin',
+          page_type: payload.pageType,
+          title: payload.title || payload.issue.title,
+          visited_url: payload.url,
+          candidate_count: payload.candidateCount,
+          selected_kind: '',
+          selected_url: '',
+          dwell_seconds: 0,
+        });
+        emitBrowseActionLog(actionLog, 'session_stop', { reason: 'unlogin', step });
+        break;
+      }
       emitBrowseActionLog(actionLog, 'inspect_error', {
         step,
-        code: payload.issue.code,
+        code: issueCode,
         title: payload.issue.title,
       });
       const title = payload.issue.title || 'Shopee page reported a read error';
@@ -136,6 +152,7 @@ export async function runBrowseSession(page, args, options = {}) {
 
     rows.push({
       step,
+      status: 'ok',
       page_type: payload.pageType,
       title: payload.title,
       visited_url: payload.url,
@@ -224,7 +241,7 @@ cli({
       help: 'Emit one action log line per browse step to stderr',
     },
   ],
-  columns: ['step', 'page_type', 'title', 'visited_url', 'candidate_count', 'selected_kind', 'selected_url', 'dwell_seconds'],
+  columns: ['step', 'status', 'page_type', 'title', 'visited_url', 'candidate_count', 'selected_kind', 'selected_url', 'dwell_seconds'],
   func: runBrowseSession,
 });
 

@@ -43,6 +43,7 @@ describe('shopee browse registration', () => {
     expect(command.timeoutSeconds).toBe(900);
     expect(command.columns).toEqual([
       'step',
+      'status',
       'page_type',
       'title',
       'visited_url',
@@ -246,6 +247,7 @@ describe('shopee browse execution', () => {
     expect(rows).toEqual([
       expect.objectContaining({
         step: 1,
+        status: 'ok',
         page_type: 'search',
         visited_url: 'https://mock.shopee.test/search?keyword=camera',
         selected_kind: 'product',
@@ -254,6 +256,7 @@ describe('shopee browse execution', () => {
       }),
       expect.objectContaining({
         step: 2,
+        status: 'ok',
         page_type: 'product',
         visited_url: 'https://mock.shopee.test/product/101/201',
         selected_kind: 'similar',
@@ -262,6 +265,7 @@ describe('shopee browse execution', () => {
       }),
       expect.objectContaining({
         step: 3,
+        status: 'ok',
         page_type: 'product',
         visited_url: 'https://mock.shopee.test/product/103/203',
         selected_kind: '',
@@ -320,21 +324,56 @@ describe('shopee browse execution', () => {
     expect(rows).toEqual([
       expect.objectContaining({
         step: 1,
+        status: 'ok',
         page_type: 'browse',
         selected_kind: 'search',
         selected_url: 'https://mock.shopee.test/search?keyword=shoe',
       }),
       expect.objectContaining({
         step: 2,
+        status: 'ok',
         page_type: 'search',
         selected_kind: 'product',
         selected_url: 'https://mock.shopee.test/product/100/200',
       }),
       expect.objectContaining({
         step: 3,
+        status: 'ok',
         page_type: 'product',
         selected_kind: '',
         selected_url: '',
+      }),
+    ]);
+  });
+
+  it('stops and returns status unlogin when Shopee shows the unavailable not-logged-in page', async () => {
+    const command = getRegistry().get('shopee/browse');
+    const domByUrl = {
+      'https://mock.shopee.test/search?keyword=camera': createDom(`
+        <html data-opencli-mock="true">
+          <head><title>Page Unavailable</title></head>
+          <body>
+            <h1>Page Unavailable</h1>
+            <p>Looks like you’re not logged in yet. Log in to continue or head back to the homepage.</p>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/search?keyword=camera'),
+    };
+    const page = createBrowsePageMock(domByUrl);
+
+    await expect(command.func(page, {
+      url: 'https://mock.shopee.test/search?keyword=camera',
+      steps: 3,
+      mock: true,
+    })).resolves.toEqual([
+      expect.objectContaining({
+        step: 1,
+        status: 'unlogin',
+        title: 'Page Unavailable',
+        visited_url: 'https://mock.shopee.test/search?keyword=camera',
+        selected_kind: '',
+        selected_url: '',
+        dwell_seconds: 0,
       }),
     ]);
   });
@@ -435,5 +474,33 @@ describe('shopee browse execution', () => {
 
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join('');
     expect(output).toContain('action:status value:not_ok reason:new_captcha');
+  });
+
+  it('emits unlogin status when Shopee shows the unavailable not-logged-in page', async () => {
+    const command = getRegistry().get('shopee/browse');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const domByUrl = {
+      'https://mock.shopee.test/search?keyword=camera': createDom(`
+        <html data-opencli-mock="true">
+          <head><title>Page Unavailable</title></head>
+          <body>
+            <h1>Page Unavailable</h1>
+            <p>Looks like you’re not logged in yet. Log in to continue or head back to the homepage.</p>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/search?keyword=camera'),
+    };
+    const page = createBrowsePageMock(domByUrl);
+
+    await expect(command.func(page, {
+      url: 'https://mock.shopee.test/search?keyword=camera',
+      steps: 3,
+      mock: true,
+      'action-log': true,
+    })).resolves.toHaveLength(1);
+
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(output).toContain('action:status value:unlogin reason:unlogin');
+    expect(output).toContain('action:session_stop reason:unlogin step:1');
   });
 });

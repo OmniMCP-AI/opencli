@@ -100,6 +100,18 @@ describe('cli() registration', () => {
     expect(cmd.defaultFormat).toBe('plain');
     expect(getRegistry().get('test-registry/plain-default')?.defaultFormat).toBe('plain');
   });
+
+  it('preserves workspace on the registered command', () => {
+    const cmd = cli({
+      site: 'test-registry',
+      name: 'workspace-default',
+      description: 'uses a dedicated workspace',
+      workspace: 'site:test-registry-special-{pid}',
+    });
+
+    expect(cmd.workspace).toBe('site:test-registry-special-{pid}');
+    expect(getRegistry().get('test-registry/workspace-default')?.workspace).toBe('site:test-registry-special-{pid}');
+  });
 });
 
 describe('fullName', () => {

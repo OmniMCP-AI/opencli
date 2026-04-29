@@ -121,6 +121,7 @@ async function loadFromManifest(manifestPath: string, clisDir: string): Promise<
       const cmd: InternalCliCommand = {
         site: entry.site,
         name: entry.name,
+        workspace: entry.workspace,
         aliases: entry.aliases,
         description: entry.description ?? '',
         domain: entry.domain,

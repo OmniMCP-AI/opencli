@@ -152,6 +152,14 @@ function ensureRequiredEnv(cmd: CliCommand): void {
   );
 }
 
+export function resolveCommandWorkspace(cmd: CliCommand): string {
+  const override = typeof cmd.workspace === 'string' ? cmd.workspace.trim() : '';
+  const raw = override || `site:${cmd.site}`;
+  return raw
+    .replaceAll('{pid}', String(process.pid))
+    .replaceAll('{ts}', String(Date.now()));
+}
+
 export async function executeCommand(
   cmd: CliCommand,
   rawKwargs: CommandArgs,
@@ -242,7 +250,7 @@ export async function executeCommand(
           if (!keepOpen) await page.closeWindow?.().catch(() => {});
           throw err;
         }
-      }, { workspace: `site:${cmd.site}`, cdpEndpoint });
+      }, { workspace: resolveCommandWorkspace(cmd), cdpEndpoint });
     } else {
       // Non-browser commands: apply timeout only when explicitly configured.
       const timeout = cmd.timeoutSeconds;

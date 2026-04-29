@@ -24,6 +24,7 @@ const OUTPUT = getCliManifestPath(CLIS_DIR);
 export interface ManifestEntry {
   site: string;
   name: string;
+  workspace?: string;
   aliases?: string[];
   description: string;
   domain?: string;
@@ -87,6 +88,7 @@ function toManifestEntry(cmd: CliCommand, modulePath: string, sourceFile?: strin
   return {
     site: cmd.site,
     name: cmd.name,
+    workspace: cmd.workspace,
     aliases: cmd.aliases,
     description: cmd.description ?? '',
     domain: cmd.domain,

@@ -14108,6 +14108,95 @@
   },
   {
     "site": "shopee",
+    "name": "browse",
+    "workspace": "browser:shopee-browse-{pid}",
+    "description": "Read-only Shopee browse rehearsal across search, product, and shop pages",
+    "domain": "shopee.sg",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Starting Shopee page URL (search, product, or shop)"
+      },
+      {
+        "name": "steps",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "Maximum navigation steps (default 3, max 200)"
+      },
+      {
+        "name": "duration-min",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Optional time budget in minutes for read-only browsing (default 0 = disabled)"
+      },
+      {
+        "name": "inspect-limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Maximum candidate links to inspect per page (default 20, max 50)"
+      },
+      {
+        "name": "dwell-min-ms",
+        "type": "int",
+        "default": 3500,
+        "required": false,
+        "help": "Minimum dwell time before the next hop in milliseconds (default 3500)"
+      },
+      {
+        "name": "dwell-max-ms",
+        "type": "int",
+        "default": 6500,
+        "required": false,
+        "help": "Maximum dwell time before the next hop in milliseconds (default 6500)"
+      },
+      {
+        "name": "search-terms",
+        "type": "str",
+        "default": "shoes,shirt",
+        "required": false,
+        "help": "Comma-separated public search keywords used as fallback seeds, e.g. shoes,shirt"
+      },
+      {
+        "name": "mock",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Allow localhost or .test hosts for local mock-site verification"
+      },
+      {
+        "name": "action-log",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Emit one action log line per browse step to stderr"
+      }
+    ],
+    "columns": [
+      "step",
+      "page_type",
+      "title",
+      "visited_url",
+      "candidate_count",
+      "selected_kind",
+      "selected_url",
+      "dwell_seconds"
+    ],
+    "timeout": 900,
+    "type": "js",
+    "modulePath": "shopee/browse.js",
+    "sourceFile": "shopee/browse.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "shopee",
     "name": "product",
     "description": "Get Shopee product details from a product URL",
     "domain": "shopee.sg",

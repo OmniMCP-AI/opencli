@@ -34,6 +34,8 @@ export type CommandArgs = Record<string, any>;
 export interface CliCommand {
   site: string;
   name: string;
+  /** Optional browser workspace override. Defaults to `site:<site>` for browser commands. */
+  workspace?: string;
   aliases?: string[];
   description: string;
   domain?: string;
@@ -96,6 +98,7 @@ export function cli(opts: CliOptions): CliCommand {
   const cmd: CliCommand = {
     site: opts.site,
     name: opts.name,
+    workspace: opts.workspace,
     aliases: opts.aliases,
     description: opts.description ?? '',
     domain: opts.domain,

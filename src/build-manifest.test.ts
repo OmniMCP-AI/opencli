@@ -36,6 +36,7 @@ describe('manifest helper rules', () => {
         site,
         name: 'dynamic',
         description: 'dynamic command',
+        workspace: 'site:manifest-dynamic-{pid}',
         strategy: Strategy.PUBLIC,
         browser: false,
         aliases: ['metadata'],
@@ -60,6 +61,7 @@ describe('manifest helper rules', () => {
       {
         site,
         name: 'dynamic',
+        workspace: 'site:manifest-dynamic-{pid}',
         description: 'dynamic command',
         domain: 'localhost',
         strategy: 'public',

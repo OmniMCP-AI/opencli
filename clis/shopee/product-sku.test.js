@@ -7,6 +7,7 @@ const {
   SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS,
   VARIANT_SELECTION_TIMEOUT_SECONDS,
   VARIATION_CAPTURE_TIMEOUT_SECONDS,
+  MAX_COLLECTION_ATTEMPTS,
   VARIATION_API_PATTERN,
   VARIANT_CLICK_DELAY_RANGE_MS,
   buildSelectionKey,
@@ -64,8 +65,9 @@ describe('shopee product-sku adapter', () => {
   });
 
   it('uses shorter per-click waits and a longer command timeout for exhaustive SKU traversal', () => {
-    expect(VARIANT_SELECTION_TIMEOUT_SECONDS).toBe(1);
-    expect(VARIATION_CAPTURE_TIMEOUT_SECONDS).toBe(1);
+    expect(VARIANT_SELECTION_TIMEOUT_SECONDS).toBe(2);
+    expect(VARIATION_CAPTURE_TIMEOUT_SECONDS).toBe(3);
+    expect(MAX_COLLECTION_ATTEMPTS).toBe(2);
     expect(SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS).toBe(600);
   });
 });

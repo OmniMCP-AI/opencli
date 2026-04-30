@@ -7,10 +7,11 @@ const VARIATION_API_PATTERN = '/api/v4/pdp/cart_panel/select_variation_pc';
 const VARIANT_GROUP_SELECTOR = '.j7HL5Q';
 const VARIANT_CLICK_DELAY_RANGE_MS = [200, 600];
 const SHOPEE_API_PRICE_SCALE = 100000;
-const VARIANT_SELECTION_TIMEOUT_SECONDS = 1;
-const VARIATION_CAPTURE_TIMEOUT_SECONDS = 1;
+const VARIANT_SELECTION_TIMEOUT_SECONDS = 2;
+const VARIATION_CAPTURE_TIMEOUT_SECONDS = 3;
 const SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS = 10 * 60;
 const SHOPEE_WORKSPACE = 'site:shopee';
+const MAX_COLLECTION_ATTEMPTS = 2;
 const PRODUCT_STOCK_COLUMNS = [
   'product_url',
   'title',
@@ -487,7 +488,7 @@ async function collectVariantRows(page, productUrl, captureMode, rowsByKey, grou
 
     const capture = clickResult.alreadySelected
       ? null
-      : await waitForVariationCapture(page, captureMode, 5);
+      : await waitForVariationCapture(page, captureMode, VARIATION_CAPTURE_TIMEOUT_SECONDS);
 
     const nextState = await inspectVariantState(page);
     const nextGroups = Array.isArray(nextState?.groups) ? nextState.groups : [];
@@ -498,6 +499,27 @@ async function collectVariantRows(page, productUrl, captureMode, rowsByKey, grou
 
     await collectVariantRows(page, productUrl, captureMode, rowsByKey, groupIndex + 1);
   }
+}
+
+async function collectVariantRowsOnce(page, productUrl, captureMode) {
+  await page.wait({ selector: `${VARIANT_GROUP_SELECTOR} button, section.OaFP0p`, timeout: 8 }).catch(() => undefined);
+  await simulateHumanBehavior(page, {
+    selector: `${VARIANT_GROUP_SELECTOR} button, section.OaFP0p`,
+    scrollRangePx: [120, 260],
+    preWaitRangeMs: [280, 700],
+    postWaitRangeMs: [220, 650],
+  });
+
+  await page.wait(1);
+  const initialCaptures = await drainVariationCaptures(page, captureMode);
+  const rowsByKey = new Map();
+
+  if (initialCaptures.length > 0) {
+    await recordCurrentSelection(page, productUrl, rowsByKey, initialCaptures[initialCaptures.length - 1]);
+  }
+
+  await collectVariantRows(page, productUrl, captureMode, rowsByKey, 0);
+  return [...rowsByKey.values()].filter((row) => row.stock !== '' || row.sku !== '' || row.group_count === 0);
 }
 
 cli({
@@ -533,25 +555,15 @@ cli({
       await page.installInterceptor(VARIATION_API_PATTERN);
     }
 
-    await page.wait({ selector: `${VARIANT_GROUP_SELECTOR} button, section.OaFP0p`, timeout: 8 }).catch(() => undefined);
-    await simulateHumanBehavior(page, {
-      selector: `${VARIANT_GROUP_SELECTOR} button, section.OaFP0p`,
-      scrollRangePx: [120, 260],
-      preWaitRangeMs: [280, 700],
-      postWaitRangeMs: [220, 650],
-    });
-
-    await page.wait(1);
-    const initialCaptures = await drainVariationCaptures(page, captureMode);
-    const rowsByKey = new Map();
-
-    if (initialCaptures.length > 0) {
-      await recordCurrentSelection(page, productUrl, rowsByKey, initialCaptures[initialCaptures.length - 1]);
+    let rows = [];
+    for (let attempt = 1; attempt <= MAX_COLLECTION_ATTEMPTS; attempt += 1) {
+      rows = await collectVariantRowsOnce(page, productUrl, captureMode);
+      if (rows.length > 0) break;
+      if (attempt < MAX_COLLECTION_ATTEMPTS) {
+        await ensureShopeeProductPage(page, productUrl);
+      }
     }
 
-    await collectVariantRows(page, productUrl, captureMode, rowsByKey, 0);
-
-    const rows = [...rowsByKey.values()].filter((row) => row.stock !== '' || row.sku !== '' || row.group_count === 0);
     if (rows.length === 0) {
       throw new EmptyResultError(
         'shopee product-sku',
@@ -568,6 +580,7 @@ export const __test__ = {
   SHOPEE_PRODUCT_SKU_TIMEOUT_SECONDS,
   VARIANT_SELECTION_TIMEOUT_SECONDS,
   VARIATION_CAPTURE_TIMEOUT_SECONDS,
+  MAX_COLLECTION_ATTEMPTS,
   VARIATION_API_PATTERN,
   VARIANT_CLICK_DELAY_RANGE_MS,
   buildSelectionKey,

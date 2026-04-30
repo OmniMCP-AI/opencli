@@ -14,12 +14,32 @@ function createBrowsePageMock(domByUrl) {
     goto: vi.fn().mockImplementation(async (url) => {
       currentUrl = url;
     }),
+    click: vi.fn().mockImplementation(async (selector) => {
+      const dom = domByUrl[currentUrl];
+      if (!dom) throw new Error(`No mock DOM for ${currentUrl}`);
+      const anchor = dom.window.document.querySelector(selector);
+      if (!(anchor instanceof dom.window.HTMLAnchorElement)) {
+        throw new Error(`No clickable anchor for selector ${selector} on ${currentUrl}`);
+      }
+      currentUrl = anchor.href;
+    }),
     autoScroll: vi.fn().mockResolvedValue(undefined),
     scroll: vi.fn().mockResolvedValue(undefined),
     wait: vi.fn().mockResolvedValue(undefined),
-    evaluate: vi.fn().mockImplementation(async () => {
+    getCurrentUrl: vi.fn().mockImplementation(async () => currentUrl),
+    evaluate: vi.fn().mockImplementation(async (js) => {
       const dom = domByUrl[currentUrl];
       if (!dom) throw new Error(`No mock DOM for ${currentUrl}`);
+      if (String(js).includes('__OPENCLI_SHOPEE_BROWSE_CLICK__')) {
+        dom.window.document.querySelectorAll('[data-opencli-browse-next]').forEach((node) => {
+          node.removeAttribute('data-opencli-browse-next');
+        });
+        const match = Array.from(dom.window.document.querySelectorAll('a[href]')).find((anchor) => anchor.href === /targetHref = "([^"]+)"/.exec(String(js))?.[1]);
+        if (!match) return { ok: false, reason: 'anchor_not_found' };
+        match.setAttribute('data-opencli-browse-next', '1');
+        return { ok: true, selector: '[data-opencli-browse-next="1"]' };
+      }
+      if (String(js).trim() === 'window.location.href') return currentUrl;
       return shared.createBrowseInspectPayload(dom.window.document, currentUrl, 20);
     }),
   };
@@ -241,8 +261,10 @@ describe('shopee browse execution', () => {
 
     expect(page.goto.mock.calls).toEqual([
       ['https://mock.shopee.test/search?keyword=camera', { waitUntil: 'load' }],
-      ['https://mock.shopee.test/product/101/201', { waitUntil: 'load' }],
-      ['https://mock.shopee.test/product/103/203', { waitUntil: 'load' }],
+    ]);
+    expect(page.click.mock.calls).toEqual([
+      ['[data-opencli-browse-next="1"]', { firstOnMulti: true }],
+      ['[data-opencli-browse-next="1"]', { firstOnMulti: true }],
     ]);
     expect(rows).toEqual([
       expect.objectContaining({
@@ -319,7 +341,9 @@ describe('shopee browse execution', () => {
     expect(page.goto.mock.calls).toEqual([
       ['https://mock.shopee.test/', { waitUntil: 'load' }],
       ['https://mock.shopee.test/search?keyword=shoe', { waitUntil: 'load' }],
-      ['https://mock.shopee.test/product/100/200', { waitUntil: 'load' }],
+    ]);
+    expect(page.click.mock.calls).toEqual([
+      ['[data-opencli-browse-next="1"]', { firstOnMulti: true }],
     ]);
     expect(rows).toEqual([
       expect.objectContaining({
@@ -343,6 +367,98 @@ describe('shopee browse execution', () => {
         selected_kind: '',
         selected_url: '',
       }),
+    ]);
+  });
+
+  it('falls back to goto when the selected same-host candidate no longer exists in the DOM', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const command = getRegistry().get('shopee/browse');
+    const domByUrl = {
+      'https://mock.shopee.test/search?keyword=camera': createDom(`
+        <html data-opencli-mock="true">
+          <body data-opencli-page-type="search">
+            <h1>Camera Search</h1>
+            <a data-opencli-role="product" href="/product/100/200">Camera A</a>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/search?keyword=camera'),
+      'https://mock.shopee.test/product/100/200': createDom(`
+        <html data-opencli-mock="true">
+          <body data-opencli-page-type="product">
+            <h1>Camera A</h1>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/product/100/200'),
+    };
+    const page = createBrowsePageMock(domByUrl);
+    page.evaluate = vi.fn().mockImplementation(async (js) => {
+      const dom = domByUrl[await page.getCurrentUrl()];
+      if (!dom) throw new Error('No DOM for fallback test');
+      if (String(js).includes('__OPENCLI_SHOPEE_BROWSE_CLICK__')) {
+        return { ok: false, reason: 'anchor_not_found' };
+      }
+      if (String(js).trim() === 'window.location.href') return await page.getCurrentUrl();
+      return shared.createBrowseInspectPayload(dom.window.document, await page.getCurrentUrl(), 20);
+    });
+
+    const rows = await command.func(page, {
+      url: 'https://mock.shopee.test/search?keyword=camera',
+      steps: 2,
+      mock: true,
+      'dwell-min-ms': 400,
+      'dwell-max-ms': 400,
+    }, { hopTimeoutMs: 50 });
+
+    expect(page.goto.mock.calls).toEqual([
+      ['https://mock.shopee.test/search?keyword=camera', { waitUntil: 'load' }],
+      ['https://mock.shopee.test/product/100/200', { waitUntil: 'load' }],
+    ]);
+    expect(page.click).not.toHaveBeenCalled();
+    expect(rows).toEqual([
+      expect.objectContaining({ step: 1, selected_url: 'https://mock.shopee.test/product/100/200' }),
+      expect.objectContaining({ step: 2, visited_url: 'https://mock.shopee.test/product/100/200' }),
+    ]);
+  });
+
+  it('falls back to goto when click executes but the URL never changes to the selected target', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const command = getRegistry().get('shopee/browse');
+    const domByUrl = {
+      'https://mock.shopee.test/search?keyword=camera': createDom(`
+        <html data-opencli-mock="true">
+          <body data-opencli-page-type="search">
+            <h1>Camera Search</h1>
+            <a data-opencli-role="product" href="/product/100/200">Camera A</a>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/search?keyword=camera'),
+      'https://mock.shopee.test/product/100/200': createDom(`
+        <html data-opencli-mock="true">
+          <body data-opencli-page-type="product">
+            <h1>Camera A</h1>
+          </body>
+        </html>
+      `, 'https://mock.shopee.test/product/100/200'),
+    };
+    const page = createBrowsePageMock(domByUrl);
+    page.click = vi.fn().mockResolvedValue(undefined);
+
+    const rows = await command.func(page, {
+      url: 'https://mock.shopee.test/search?keyword=camera',
+      steps: 2,
+      mock: true,
+      'dwell-min-ms': 400,
+      'dwell-max-ms': 400,
+    }, { hopTimeoutMs: 50 });
+
+    expect(page.click).toHaveBeenCalledWith('[data-opencli-browse-next="1"]', { firstOnMulti: true });
+    expect(page.goto.mock.calls).toEqual([
+      ['https://mock.shopee.test/search?keyword=camera', { waitUntil: 'load' }],
+      ['https://mock.shopee.test/product/100/200', { waitUntil: 'load' }],
+    ]);
+    expect(rows).toEqual([
+      expect.objectContaining({ step: 1, selected_url: 'https://mock.shopee.test/product/100/200' }),
+      expect.objectContaining({ step: 2, visited_url: 'https://mock.shopee.test/product/100/200' }),
     ]);
   });
 

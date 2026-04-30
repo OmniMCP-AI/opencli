@@ -17,6 +17,7 @@ import {
 } from './browse-shared.js';
 
 const SHOPEE_BROWSE_TIMEOUT_SECONDS = 15 * 60;
+const BROWSE_NEXT_ATTR = 'data-opencli-browse-next';
 
 function isActionLogEnabled(args) {
   if (args?.['action-log'] === true) return true;
@@ -41,19 +42,147 @@ async function inspectCurrentPage(page, currentUrl, inspectLimit) {
   return normalizeBrowseInspectPayload(payload, currentUrl, inspectLimit);
 }
 
+function buildBrowseClickCandidateScript(targetHref) {
+  return `
+    (() => {
+      const marker = '__OPENCLI_SHOPEE_BROWSE_CLICK__';
+      const targetHref = ${JSON.stringify(targetHref)};
+      const attr = ${JSON.stringify(BROWSE_NEXT_ATTR)};
+      const absolutize = (href) => {
+        try {
+          const url = new URL(String(href || ''), window.location.href);
+          url.hash = '';
+          return url.toString();
+        } catch {
+          return '';
+        }
+      };
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      document.querySelectorAll('[' + attr + ']').forEach((node) => node.removeAttribute(attr));
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
+      const exactMatches = anchors.filter((anchor) => absolutize(anchor.getAttribute('href')) === targetHref);
+      const selected = exactMatches.find(isVisible) || exactMatches[0] || null;
+      if (!selected) {
+        return { marker, ok: false, reason: 'anchor_not_found', href: targetHref };
+      }
+      selected.setAttribute(attr, '1');
+      return { marker, ok: true, selector: '[' + attr + '="1"]', href: targetHref };
+    })()
+  `;
+}
+
+async function readCurrentPageUrl(page, fallbackUrl) {
+  if (typeof page.getCurrentUrl === 'function') {
+    try {
+      const value = await page.getCurrentUrl();
+      if (typeof value === 'string' && value.trim()) return value;
+    } catch {}
+  }
+  try {
+    const value = await page.evaluate('window.location.href');
+    if (typeof value === 'string' && value.trim()) return value;
+  } catch {}
+  return fallbackUrl;
+}
+
+function normalizeHopUrlForComparison(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (
+      (url.protocol === 'https:' && url.port === '443')
+      || (url.protocol === 'http:' && url.port === '80')
+    ) {
+      url.port = '';
+    }
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return String(value || '').trim();
+  }
+}
+
+function isExpectedHopUrl(currentUrl, targetUrl) {
+  const current = normalizeHopUrlForComparison(currentUrl);
+  const target = normalizeHopUrlForComparison(targetUrl);
+  return !!current && !!target && current === target;
+}
+
+async function waitForHopUrl(page, targetUrl, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastUrl = await readCurrentPageUrl(page, '');
+  while (Date.now() < deadline) {
+    if (isExpectedHopUrl(lastUrl, targetUrl)) {
+      return { ok: true, currentUrl: lastUrl };
+    }
+    await page.wait({ time: 0.2 });
+    lastUrl = await readCurrentPageUrl(page, lastUrl || targetUrl);
+  }
+  return { ok: isExpectedHopUrl(lastUrl, targetUrl), currentUrl: lastUrl };
+}
+
+async function performBrowseHop(page, target, actionLog, step, hopTimeoutMs = 5000) {
+  const targetUrl = target?.href || '';
+  const mode = target?.navigate_via === 'click' ? 'click' : 'goto';
+  emitBrowseActionLog(actionLog, 'navigate_start', { step, url: targetUrl, mode });
+
+  if (mode === 'click' && typeof page.click === 'function') {
+    const tagged = await page.evaluate(buildBrowseClickCandidateScript(targetUrl)).catch(() => null);
+    if (tagged?.ok && tagged.selector) {
+      emitBrowseActionLog(actionLog, 'click_nav_start', { step, url: targetUrl });
+      await page.click(tagged.selector, { firstOnMulti: true });
+      const hop = await waitForHopUrl(page, targetUrl, hopTimeoutMs);
+      if (hop.ok) {
+        await page.wait({ time: 1 });
+        emitBrowseActionLog(actionLog, 'click_nav_done', {
+          step,
+          url: targetUrl,
+          current_url: hop.currentUrl,
+        });
+        emitBrowseActionLog(actionLog, 'navigate_done', { step, url: targetUrl, mode: 'click' });
+        return;
+      }
+      emitBrowseActionLog(actionLog, 'click_nav_fallback', {
+        step,
+        url: targetUrl,
+        reason: 'url_not_changed',
+        current_url: hop.currentUrl,
+      });
+    } else {
+      emitBrowseActionLog(actionLog, 'click_nav_fallback', {
+        step,
+        url: targetUrl,
+        reason: tagged?.reason || 'click_prepare_failed',
+      });
+    }
+  }
+
+  await page.goto(targetUrl, { waitUntil: 'load' });
+  emitBrowseActionLog(actionLog, 'navigate_done', { step, url: targetUrl, mode: 'goto' });
+}
+
 function chooseNextTarget(payload, visitedUrls, seedQueue, allowSeedFallback = false) {
   const chosen = pickBrowseCandidate(payload, visitedUrls);
-  if (chosen) return chosen;
+  if (chosen) return { ...chosen, navigate_via: 'click', selection_source: 'candidate' };
   if (!allowSeedFallback || !['browse', 'search'].includes(payload?.pageType || '')) return null;
   while (seedQueue.length > 0) {
     const seed = seedQueue.shift();
-    if (seed?.href && !visitedUrls.has(seed.href)) return seed;
+    if (seed?.href && !visitedUrls.has(seed.href)) {
+      return { ...seed, navigate_via: 'goto', selection_source: 'seed' };
+    }
   }
   return null;
 }
 
 export async function runBrowseSession(page, args, options = {}) {
   const nowFn = typeof options.nowFn === 'function' ? options.nowFn : () => Date.now();
+  const hopTimeoutMs = Number.isFinite(options.hopTimeoutMs) ? Math.max(0, Number(options.hopTimeoutMs)) : 5000;
   const mock = !!args.mock;
   const actionLog = isActionLogEnabled(args);
   const startUrl = normalizeShopeeBrowseUrl(args.url, { allowMock: mock });
@@ -66,7 +195,11 @@ export async function runBrowseSession(page, args, options = {}) {
   const allowSeedFallback = durationMin > 0;
   const visitedUrls = new Set();
   const rows = [];
-  let currentUrl = startUrl;
+  let currentHop = {
+    href: startUrl,
+    navigate_via: 'goto',
+    selection_source: 'start',
+  };
   const deadlineAt = durationMin > 0 ? nowFn() + durationMin * 60 * 1000 : null;
   emitBrowseActionLog(actionLog, 'session_start', {
     url: startUrl,
@@ -80,10 +213,8 @@ export async function runBrowseSession(page, args, options = {}) {
       emitBrowseActionLog(actionLog, 'session_stop', { reason: 'deadline_reached', step });
       break;
     }
-    emitBrowseActionLog(actionLog, 'step_start', { step, url: currentUrl });
-    emitBrowseActionLog(actionLog, 'navigate_start', { step, url: currentUrl });
-    await page.goto(currentUrl, { waitUntil: 'load' });
-    emitBrowseActionLog(actionLog, 'navigate_done', { step, url: currentUrl });
+    emitBrowseActionLog(actionLog, 'step_start', { step, url: currentHop.href });
+    await performBrowseHop(page, currentHop, actionLog, step, hopTimeoutMs);
     if (typeof page.autoScroll === 'function') {
       emitBrowseActionLog(actionLog, 'autoscroll_start', { step });
       await page.autoScroll({ times: 1, delayMs: 700 }).catch(() => undefined);
@@ -98,6 +229,7 @@ export async function runBrowseSession(page, args, options = {}) {
     emitBrowseActionLog(actionLog, 'humanize_done', { step });
 
     emitBrowseActionLog(actionLog, 'inspect_start', { step, limit: inspectLimit });
+    const currentUrl = await readCurrentPageUrl(page, currentHop.href);
     const payload = await inspectCurrentPage(page, currentUrl, inspectLimit);
     if (payload.issue) {
       const issueCode = payload.issue.code || 'page_issue';
@@ -170,7 +302,7 @@ export async function runBrowseSession(page, args, options = {}) {
       emitBrowseActionLog(actionLog, 'session_stop', { reason: 'deadline_reached', step });
       break;
     }
-    currentUrl = chosen.href;
+    currentHop = chosen;
   }
 
   emitBrowseActionLog(actionLog, 'session_done', { rows: rows.length });

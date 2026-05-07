@@ -63,16 +63,21 @@ opencli hackernews top --limit 5
 opencli bilibili hot --limit 5
 ```
 
-### 5. Try Shopee commands
+### 5. Try Shopee and Shopdora commands
 
 ```bash
 opencli shopee search "wireless earbuds" --origin https://shopee.sg --limit 10 -f json
 opencli shopee product "https://shopee.sg/...-i.123.456" -f json
 opencli shopee product-sku "https://shopee.sg/...-i.123.456" -f json
 opencli shopee product-shopdora-download "https://shopee.sg/...-i.123.456" -f json
+
+opencli shopdora product "https://shopee.sg/product/1061703981/22354330822" -f json
+opencli shopdora search "shoe" --region sg -f json
+opencli shopdora product-shopdora-download "https://shopee.sg/product/1061703981/22354330822" -f json
 ```
 
 More Shopee notes: [`docs/adapters/browser/shopee.md`](./docs/adapters/browser/shopee.md)
+More Shopdora notes: [`docs/adapters/browser/shopdora.md`](./docs/adapters/browser/shopdora.md)
 
 ## For Humans
 
@@ -238,6 +243,7 @@ To load the source Browser Bridge extension:
 | **reddit** | `hot` `frontpage` `popular` `search` `subreddit` `read` `user` `user-posts` `user-comments` `upvote` `upvoted` `save` `saved` `comment` `subscribe` |
 | **zhihu** | `hot` `search` `question` `download` `follow` `like` `favorite` `comment` `answer` |
 | **shopee** | `search` `product` `product-sku` `product-shopdora-download` |
+| **shopdora** | `product` `search` `product-shopdora-download` |
 | **amazon** | `bestsellers` `search` `product` `offer` `discussion` `movers-shakers` `new-releases` `rankings` |
 | **1688** | `search` `item` `assets` `download` `store` |
 | **gitee** | `trending` `search` `user` |
@@ -311,6 +317,7 @@ OpenCLI supports downloading images, videos, and articles from supported platfor
 | **douban** | Images | Poster / still image lists |
 | **pixiv** | Images | Original-quality illustrations, multi-page |
 | **1688** | Images, Videos | Downloads page-visible product media from item pages |
+| **shopdora** | Comment export | Downloads filtered Shopee product comments from Shopdora analysis |
 | **xiaoyuzhou** | Audio, Transcript | Downloads episode audio and transcript JSON/text with local credentials |
 | **zhihu** | Articles (Markdown) | Exports with optional image download |
 | **weixin** | Articles (Markdown) | WeChat Official Account articles |
@@ -323,6 +330,7 @@ opencli xiaohongshu download "https://xhslink.com/..." --output ./xhs
 opencli bilibili download BV1xxx --output ./bilibili
 opencli twitter download elonmusk --limit 20 --output ./twitter
 opencli 1688 download 841141931191 --output ./1688-downloads
+opencli shopdora product-shopdora-download "https://shopee.sg/product/1061703981/22354330822" -f json
 opencli xiaoyuzhou download 69b3b675772ac2295bfc01d0 --output ./xiaoyuzhou
 opencli xiaoyuzhou transcript 69dd0c98e2c8be31551f6a33 --output ./xiaoyuzhou-transcripts
 ```

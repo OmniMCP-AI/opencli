@@ -14178,7 +14178,7 @@
   {
     "site": "shopdora",
     "name": "product-shopdora-download",
-    "description": "Submit a Shopdora comment-analysis task for a Shopee product URL and return the taskKey",
+    "description": "Submit or reuse a Shopdora comment-analysis task for a Shopee product URL and download comments",
     "domain": "www.shopdora.com",
     "strategy": "cookie",
     "browser": true,
@@ -14196,6 +14196,35 @@
     "type": "js",
     "modulePath": "shopdora/product-shopdora-download.js",
     "sourceFile": "shopdora/product-shopdora-download.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "shopdora",
+    "name": "search",
+    "description": "Search Shopdora hot products by keyword",
+    "domain": "www.shopdora.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "keyword",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Shopdora hot product search keyword"
+      },
+      {
+        "name": "region",
+        "type": "str",
+        "default": "sg",
+        "required": false,
+        "help": "Shopee region/site, e.g. sg,my,tw,ph,th,vn,br,id,mx,mc"
+      }
+    ],
+    "columns": [],
+    "type": "js",
+    "modulePath": "shopdora/search.js",
+    "sourceFile": "shopdora/search.js",
     "navigateBefore": false
   },
   {

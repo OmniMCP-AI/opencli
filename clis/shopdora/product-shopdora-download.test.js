@@ -706,6 +706,48 @@ describe('shopdora product-shopdora-download adapter', () => {
     );
   });
 
+  it('falls back to a DOM click when the region select bridge click fails', async () => {
+    const click = vi.fn().mockImplementation(async (selector) => {
+      if (selector === '[data-opencli-shopdora-product-shopdora-download-target="region-select-trigger"]') {
+        throw new Error('element click intercepted');
+      }
+    });
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const evaluate = vi.fn().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('const target = "region-select-trigger";')) {
+        return { ok: true, selector: '[data-opencli-shopdora-product-shopdora-download-target="region-select-trigger"]' };
+      }
+      if (source.includes('region_select_not_found')) {
+        return { ok: true, value: '台湾' };
+      }
+      if (source.includes('pointerdown')) {
+        return { ok: true, tag: 'div', className: 't-select', text: '台湾' };
+      }
+      if (source.includes('const target = "region-option:马来西亚";')) {
+        return { ok: true, selector: '[data-opencli-shopdora-product-shopdora-download-target="region-option:马来西亚"]' };
+      }
+      return { ok: false, error: 'target_not_found' };
+    });
+
+    await expect(selectCommentAnalysisRegion({
+      click,
+      wait,
+      evaluate,
+    }, '马来西亚')).resolves.toBe(true);
+
+    expect(click).toHaveBeenNthCalledWith(
+      1,
+      '[data-opencli-shopdora-product-shopdora-download-target="region-select-trigger"]',
+    );
+    expect(click).toHaveBeenNthCalledWith(
+      2,
+      '[data-opencli-shopdora-product-shopdora-download-target="region-option:马来西亚"]',
+    );
+    expect(
+      evaluate.mock.calls.some(([script]) => String(script ?? '').includes('pointerdown')),
+    ).toBe(true);
+  });
 
   it('retries the query button under the active interceptor', async () => {
     const click = vi.fn().mockResolvedValue(undefined);

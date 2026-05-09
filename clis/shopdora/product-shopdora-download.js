@@ -1044,8 +1044,29 @@ async function clickSelector(page, selector, label) {
     await sleepAction(page);
     await page.click(selector);
     await sleepAction(page);
+    return;
   } catch (error) {
-    throw new CommandExecutionError(`shopdora product-shopdora-download could not click ${label}`, error instanceof Error ? error.message : String(error));
+    let fallbackMessage = '';
+    if (typeof page?.evaluate === 'function') {
+      try {
+        const result = await page.evaluate(buildForceDomClickScript(selector));
+        if (result && typeof result === 'object' && result.ok === true) {
+          logStep(`clicked ${label} with DOM fallback`);
+          await sleepAction(page);
+          return;
+        }
+        fallbackMessage = result && typeof result === 'object' && result.error
+          ? `; DOM fallback failed: ${result.error}`
+          : '; DOM fallback failed';
+      } catch (fallbackError) {
+        fallbackMessage = `; DOM fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`;
+      }
+    }
+
+    throw new CommandExecutionError(
+      `shopdora product-shopdora-download could not click ${label}`,
+      `${error instanceof Error ? error.message : String(error)}${fallbackMessage}`,
+    );
   }
 }
 

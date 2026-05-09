@@ -151,7 +151,8 @@ describe('shopdora product-shopdora-download adapter', () => {
   });
 
   it('builds selector and input scripts around the dialog workflow', () => {
-    expect(buildResolveTargetSelectorScript('add-button')).toContain('添加添加');
+    expect(buildResolveTargetSelectorScript('add-button')).toContain('添加产品');
+    expect(buildResolveTargetSelectorScript('add-button')).toContain('.t-icon-add');
     expect(buildResolveTargetSelectorScript('product-link-input')).toContain('产品链接');
     expect(buildResolveTargetSelectorScript('comment-analysis-keyword-input')).toContain('产品名/id/关键字');
     expect(buildResolveTargetSelectorScript('query-button')).toContain('查询');
@@ -176,6 +177,38 @@ describe('shopdora product-shopdora-download adapter', () => {
     expect(buildReadCommentSummaryUnavailableScript()).toContain('/my/analysis/newComment');
     expect(buildReadRangeInputValuesScript('[data-test="input"]')).toContain('endValue');
     expect(buildSetInputValueScript('[data-test="input"]', 'https://shopee.sg/item')).toContain('dispatchEvent(new Event(\'input\'');
+  });
+
+  it('resolves the current Shopdora add-product button structure', () => {
+    const dom = new JSDOM(`
+      <div class="inline-filter-containter">
+        <form class="t-form t-form-inline">
+          <button class="t-button t-button--theme-primary confirm" type="button">
+            <span class="t-button__text">查询</span>
+          </button>
+          <button class="t-button t-button--theme-default reset" type="button">
+            <span class="t-button__text">重置</span>
+          </button>
+          <button class="t-button t-button--theme-primary add" type="button">
+            <svg class="t-icon t-icon-add"></svg>
+            <span class="t-button__text"> 添加产品</span>
+          </button>
+        </form>
+      </div>
+    `, { runScripts: 'outside-only' });
+
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ width: 120, height: 32, top: 0, left: 0, right: 120, bottom: 32 }),
+    });
+
+    const result = dom.window.eval(buildResolveTargetSelectorScript('add-button'));
+
+    expect(result).toMatchObject({
+      ok: true,
+      selector: '[data-opencli-shopdora-product-shopdora-download-target="add-button"]',
+    });
+    expect(dom.window.document.querySelector(result.selector)?.classList.contains('add')).toBe(true);
   });
 
   it('resolves region options from popup list items with decorated text', () => {

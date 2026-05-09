@@ -17,7 +17,7 @@ const SHOPDORA_COMMENT_LIST_API_URL = 'https://www.shopdora.com/api/comment/list
 const SHOPDORA_COMMENT_EXPORT_API_URL = 'https://www.shopdora.com/api/comment/export';
 const SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE = '该产品累计评论数少于50条，无法对其进行评论总结，请选择其他产品进行分析';
 const RESOLVED_TARGET_ATTRIBUTE = 'data-opencli-shopdora-product-shopdora-download-target';
-const ADD_BUTTON_TEXTS = ['添加添加', '添加'];
+const ADD_BUTTON_TEXTS = ['添加产品', '添加添加', '添加', 'Add Products', 'Add Product', 'Add'];
 const PRODUCT_LINK_LABEL_TEXTS = ['产品链接', 'Product Link', 'Product URL'];
 const QUERY_BUTTON_TEXTS = ['查询', 'Query', 'Search'];
 const COMMENT_ANALYSIS_KEYWORD_PLACEHOLDERS = ['产品名/id/关键字', '产品名 / id / 关键字', 'Product Name/ID/Keyword'];
@@ -522,6 +522,26 @@ function buildResolveTargetSelectorScript(target) {
 
         return findClickableByText(document, downloadCommentTexts);
       };
+      const findAddButton = () => {
+        const exactSelectors = [
+          '.inline-filter-containter button.add',
+          '.inline-filter-containter .t-button.add',
+          'form button.add',
+          'form .t-button.add',
+          'button.add',
+          '.t-button.add',
+        ];
+        for (const selector of exactSelectors) {
+          const element = document.querySelector(selector);
+          if (element instanceof HTMLElement && isVisible(element)) return element;
+        }
+
+        const addIcon = document.querySelector('.t-icon-add');
+        const iconButton = addIcon?.closest('button, [role="button"], .t-button');
+        if (iconButton instanceof HTMLElement && isVisible(iconButton)) return iconButton;
+
+        return findButtonByText(document, addTexts);
+      };
       const findInputByLabel = (scope, labelTexts) => {
         const wanted = labelTexts.map(lower);
         const labelCandidates = Array.from((scope || document).querySelectorAll(
@@ -759,7 +779,7 @@ function buildResolveTargetSelectorScript(target) {
         }) || null;
       };
       if (target === 'add-button') {
-        return mark(target, findButtonByText(document, addTexts));
+        return mark(target, findAddButton());
       }
 
       if (target === 'product-link-input') {

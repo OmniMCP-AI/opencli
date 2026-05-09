@@ -596,12 +596,31 @@ function buildResolveTargetSelectorScript(target) {
       const findRegionOption = (title) => {
         const wanted = normalizeText(title);
         if (!wanted) return null;
-        const options = Array.from(document.querySelectorAll('.t-select__list .t-select-option, .t-select-option, li[title]'));
+        const optionSelectors = [
+          '.t-select__list .t-select-option',
+          '.t-select-option',
+          '.t-select-option__content',
+          '.t-popup .t-select-option',
+          '.t-popup li',
+          '.t-popup [role="option"]',
+          '.t-popup [title]',
+          '.t-popup__content li',
+          '.t-popup__content [role="option"]',
+          '.el-select-dropdown__item',
+          '.ant-select-item-option',
+          'li[title]',
+          '[role="option"]',
+        ].join(', ');
+        const options = Array.from(document.querySelectorAll(optionSelectors));
         for (const option of options) {
           if (!(option instanceof HTMLElement) || !isVisible(option)) continue;
           const optionTitle = normalizeText(option.getAttribute('title') || '');
           const optionText = normalizeText(option.textContent || '');
-          if (optionTitle === wanted || optionText === wanted) return option;
+          if (optionTitle === wanted || optionText === wanted || optionText.includes(wanted)) {
+            const clickable = option.closest('.t-select-option, [role="option"], li, .el-select-dropdown__item, .ant-select-item-option');
+            if (clickable instanceof HTMLElement && isVisible(clickable)) return clickable;
+            return option;
+          }
         }
         return null;
       };

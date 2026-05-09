@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getRegistry } from '@jackwener/opencli/registry';
 import { pathToFileURL } from 'node:url';
+import { JSDOM } from 'jsdom';
 
 vi.mock('@jackwener/opencli/logger', () => ({
   log: {
@@ -175,6 +176,29 @@ describe('shopdora product-shopdora-download adapter', () => {
     expect(buildReadCommentSummaryUnavailableScript()).toContain('/my/analysis/newComment');
     expect(buildReadRangeInputValuesScript('[data-test="input"]')).toContain('endValue');
     expect(buildSetInputValueScript('[data-test="input"]', 'https://shopee.sg/item')).toContain('dispatchEvent(new Event(\'input\'');
+  });
+
+  it('resolves region options from popup list items with decorated text', () => {
+    const dom = new JSDOM(`
+      <div class="t-popup">
+        <ul>
+          <li class="shopdora-region-option"><span>马来西亚 MY</span></li>
+        </ul>
+      </div>
+    `, { runScripts: 'outside-only' });
+
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ width: 120, height: 32, top: 0, left: 0, right: 120, bottom: 32 }),
+    });
+
+    const result = dom.window.eval(buildResolveTargetSelectorScript('region-option:马来西亚'));
+
+    expect(result).toMatchObject({
+      ok: true,
+      selector: '[data-opencli-shopdora-product-shopdora-download-target="region-option:马来西亚"]',
+    });
+    expect(dom.window.document.querySelector(result.selector)?.tagName).toBe('LI');
   });
 
   it('parses intercepted payloads, adjusts the date, and picks the matching analysis row', () => {

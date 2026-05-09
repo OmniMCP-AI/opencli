@@ -23,6 +23,7 @@ const {
   SHOPDORA_API_CAPTURE_PATTERN,
   SHOPDORA_COMMENT_DETAIL_URL,
   SHOPDORA_COMMENT_LIST_API_URL,
+  SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE,
   OUTPUT_COLUMNS,
   RESULT_TIMEOUT_SECONDS,
   DOWNLOAD_TIMEOUT_SECONDS,
@@ -40,6 +41,8 @@ const {
   selectCommentAnalysisRegion,
   buildForceDomClickScript,
   buildIsCommentDetailVisibleScript,
+  buildReadCommentSummaryUnavailableScript,
+  assertCommentSummaryAvailable,
   buildReadRangeInputValuesScript,
   parseInterceptedPayload,
   readInterceptedEntryRequestBody,
@@ -168,6 +171,8 @@ describe('shopdora product-shopdora-download adapter', () => {
     expect(buildEnsureCheckboxStateScript('[data-test="checkbox"]', true)).toContain('toggle_target_not_found');
     expect(buildForceDomClickScript('[data-test="tab"]')).toContain('pointerdown');
     expect(buildIsCommentDetailVisibleScript()).toContain('.comment-detail');
+    expect(buildReadCommentSummaryUnavailableScript()).toContain(SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE);
+    expect(buildReadCommentSummaryUnavailableScript()).toContain('/my/analysis/newComment');
     expect(buildReadRangeInputValuesScript('[data-test="input"]')).toContain('endValue');
     expect(buildSetInputValueScript('[data-test="input"]', 'https://shopee.sg/item')).toContain('dispatchEvent(new Event(\'input\'');
   });
@@ -533,6 +538,17 @@ describe('shopdora product-shopdora-download adapter', () => {
     await expect(openCommentDetailTabIfPresent({ evaluate, wait })).resolves.toBe(false);
   });
 
+  it('throws a clear error when newComment reports too few cumulative comments', async () => {
+    const evaluate = vi.fn().mockResolvedValue({
+      ok: true,
+      isNewCommentPage: true,
+      hasMessage: true,
+      message: SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE,
+    });
+
+    await expect(assertCommentSummaryAvailable({ evaluate })).rejects.toThrow(SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE);
+  });
+
   it('falls back to current-tab navigation when newTab is unavailable', async () => {
     const goto = vi.fn().mockResolvedValue(undefined);
     await expect(openShopdoraPage({ goto }, SHOPDORA_COMMENT_ANALYSIS_URL)).resolves.toEqual({
@@ -710,6 +726,48 @@ describe('shopdora product-shopdora-download adapter', () => {
       progress: 100,
     });
     expect(wait).toHaveBeenCalled();
+  });
+
+  it('returns the created taskKey immediately even before progress reaches 100', async () => {
+    const getInterceptedRequests = vi.fn()
+      .mockResolvedValueOnce([{
+        url: 'https://www.shopdora.com/api/comment/commentAnalysis?page=1',
+        body: JSON.stringify({
+          code: 'ok',
+          data: {
+            list: [
+              {
+                taskKey: 'created-but-running-task',
+                itemId: '21166583642',
+                shopId: '902829235',
+                site: 'sg',
+                progress: 20,
+                createTime: '20260506170410',
+              },
+            ],
+          },
+        }),
+      }]);
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    const result = await waitForTaskKey({
+      getInterceptedRequests,
+      wait,
+    }, {
+      itemId: '21166583642',
+      shopId: '902829235',
+      site: 'sg',
+    }, 5);
+
+    expect(result).toEqual({
+      taskKey: 'created-but-running-task',
+      itemId: '21166583642',
+      shopId: '902829235',
+      site: 'sg',
+      progress: 20,
+    });
+    expect(getInterceptedRequests).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
   });
 
   it('refreshes the Shopdora page while waiting for queryTask progress', async () => {
@@ -1048,6 +1106,85 @@ describe('shopdora product-shopdora-download adapter', () => {
       mime: 'text/csv',
       fileSize: 1234,
     }]);
+  });
+
+  it('returns an error when the newComment page says the product has fewer than 50 comments', async () => {
+    const newTab = vi.fn()
+      .mockResolvedValueOnce('page-comment-analysis')
+      .mockResolvedValueOnce('page-comment-detail');
+    const selectTab = vi.fn().mockResolvedValue(undefined);
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const installInterceptor = vi.fn().mockResolvedValue(undefined);
+    const click = vi.fn().mockResolvedValue(undefined);
+    const waitForDownload = vi.fn().mockResolvedValue({
+      filename: '/tmp/should-not-download.csv',
+    });
+    const evaluate = vi.fn().mockImplementation(async (script) => {
+      const source = String(script ?? '');
+      if (source.includes('.shopdoraLoginPage') && source.includes('.pageDetailLoginTitle')) {
+        return { hasShopdoraLoginPage: false, hasPageDetailLoginTitle: false };
+      }
+      if (source.includes('const target = "comment-analysis-keyword-input";')) {
+        return { ok: true, selector: '[data-opencli-shopdora-product-shopdora-download-target="comment-analysis-keyword-input"]' };
+      }
+      if (source.includes('const target = "query-button";')) {
+        return { ok: true, selector: '[data-opencli-shopdora-product-shopdora-download-target="query-button"]' };
+      }
+      if (source.includes('const target = "region-select-trigger";')) {
+        return { ok: true, selector: '[data-opencli-shopdora-product-shopdora-download-target="region-select-trigger"]' };
+      }
+      if (source.includes('region_select_not_found')) {
+        return { ok: true, value: '新加坡' };
+      }
+      if (source.includes('dispatchEvent(new Event(\'input\'')) {
+        return { ok: true, value: '21166583642' };
+      }
+      if (source.includes(SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE)) {
+        return {
+          ok: true,
+          isNewCommentPage: true,
+          hasMessage: true,
+          message: SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE,
+        };
+      }
+      return { ok: true };
+    });
+    const getInterceptedRequests = vi.fn().mockResolvedValue([{
+      url: 'https://www.shopdora.com/api/comment/commentAnalysis?page=1',
+      body: JSON.stringify({
+        code: 'ok',
+        data: {
+          list: [{
+            taskKey: 'too-few-comments-task',
+            itemId: '21166583642',
+            shopId: '902829235',
+            site: 'sg',
+            progress: 100,
+          }],
+        },
+      }),
+    }]);
+
+    const page = {
+      newTab,
+      selectTab,
+      wait,
+      evaluate,
+      installInterceptor,
+      click,
+      getInterceptedRequests,
+      waitForDownload,
+    };
+
+    await expect(command.func(page, {
+      shopeeProductUrl: 'https://shopee.sg/abc-i.902829235.21166583642',
+    })).rejects.toThrow(SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE);
+
+    expect(newTab).toHaveBeenNthCalledWith(
+      2,
+      `${SHOPDORA_COMMENT_DETAIL_URL}?site=sg&taskKey=too-few-comments-task&shopId=902829235`,
+    );
+    expect(waitForDownload).not.toHaveBeenCalled();
   });
 
   it('refreshes under the interceptor and reuses the existing task when the first capture misses commentAnalysis', async () => {

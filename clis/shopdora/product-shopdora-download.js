@@ -15,6 +15,7 @@ const SHOPDORA_API_CAPTURE_PATTERN = '/api/';
 const SHOPDORA_COMMENT_DETAIL_URL = 'https://www.shopdora.com/my/analysis/newComment';
 const SHOPDORA_COMMENT_LIST_API_URL = 'https://www.shopdora.com/api/comment/list';
 const SHOPDORA_COMMENT_EXPORT_API_URL = 'https://www.shopdora.com/api/comment/export';
+const SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE = '该产品累计评论数少于50条，无法对其进行评论总结，请选择其他产品进行分析';
 const RESOLVED_TARGET_ATTRIBUTE = 'data-opencli-shopdora-product-shopdora-download-target';
 const ADD_BUTTON_TEXTS = ['添加添加', '添加'];
 const PRODUCT_LINK_LABEL_TEXTS = ['产品链接', 'Product Link', 'Product URL'];
@@ -1151,6 +1152,51 @@ function buildIsCommentDetailVisibleScript() {
   `;
 }
 
+function buildReadCommentSummaryUnavailableScript() {
+  return `
+    (() => {
+      const expectedPath = '/my/analysis/newComment';
+      const message = ${JSON.stringify(SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE)};
+      const normalizeText = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const compactText = (value) => normalizeText(value).replace(/\\s+/g, '');
+      let isNewCommentPage = false;
+      try {
+        isNewCommentPage = window.location.pathname.replace(/\\/+$/, '') === expectedPath;
+      } catch {}
+
+      const pageText = normalizeText(document.body?.textContent || '');
+      const hasMessage = pageText.includes(message) || compactText(pageText).includes(compactText(message));
+      return {
+        ok: true,
+        isNewCommentPage,
+        hasMessage,
+        message: hasMessage ? message : '',
+      };
+    })()
+  `;
+}
+
+async function assertCommentSummaryAvailable(page) {
+  let state = null;
+  try {
+    state = await page.evaluate(buildReadCommentSummaryUnavailableScript());
+  } catch {
+    return;
+  }
+
+  if (
+    state
+    && typeof state === 'object'
+    && state.isNewCommentPage
+    && state.hasMessage
+  ) {
+    throw new CommandExecutionError(
+      SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE,
+      'Shopdora requires at least 50 cumulative comments before this product can be analyzed.',
+    );
+  }
+}
+
 async function forceDomClick(page, selector, label) {
   const result = await page.evaluate(buildForceDomClickScript(selector));
   if (!result || typeof result !== 'object' || result.ok !== true) {
@@ -2218,13 +2264,13 @@ async function waitForTaskKey(page, expected, timeoutSeconds = RESULT_TIMEOUT_SE
       if (rows.length > 0) {
         lastCommentRows = rows;
         const matched = selectMatchingCommentAnalysisRow(rows, expected);
-        if (matched && matched.taskKey && (sawProgress100 || Number(matched.progress ?? 0) === 100)) {
+        if (matched && matched.taskKey) {
           return {
             taskKey: String(matched.taskKey),
             itemId: String(matched.itemId ?? ''),
             shopId: String(matched.shopId ?? expected.shopId ?? ''),
             site: String(matched.site ?? expected.site ?? ''),
-            progress: Number(matched.progress ?? progress ?? 100) || 100,
+            progress: Number(matched.progress ?? (sawProgress100 ? 100 : 0)) || 0,
           };
         }
       }
@@ -2300,6 +2346,7 @@ cli({
     let interceptedProbe = await probeExistingCommentAnalysisTask(page, expected, EXISTING_TASK_DISCOVERY_SECONDS);
     let task = interceptedProbe.task;
 
+    let createdNewTask = false;
     if (!task?.taskKey) {
       logStep('intercepted commentAnalysis did not find the item; checking direct commentAnalysis fetch');
       const directCommentAnalysisResult = await waitForDirectCommentAnalysisTask(page, expected, EXISTING_TASK_DISCOVERY_SECONDS);
@@ -2369,12 +2416,14 @@ cli({
       logStep('waiting briefly for created analysis task');
       try {
         task = await waitForTaskKey(page, expected, EXISTING_TASK_DISCOVERY_SECONDS);
+        createdNewTask = Boolean(task?.taskKey);
       } catch (error) {
         if (!(error instanceof EmptyResultError)) throw error;
         logStep('created task was not immediately visible; refreshing commentAnalysis list');
         await triggerCommentAnalysisQuery(page, 'commentAnalysis request after task creation');
         const createdProbe = await probeExistingCommentAnalysisTask(page, expected, EXISTING_TASK_DISCOVERY_SECONDS);
         task = createdProbe.task;
+        createdNewTask = Boolean(task?.taskKey);
         if (!task?.taskKey) {
           const refreshedDirectCommentAnalysisResult = await waitForDirectCommentAnalysisTask(
             page,
@@ -2382,23 +2431,23 @@ cli({
             EXISTING_TASK_DISCOVERY_SECONDS,
           );
           task = refreshedDirectCommentAnalysisResult.task;
+          createdNewTask = Boolean(task?.taskKey);
         }
         if (!task?.taskKey) {
           logStep('waiting for created analysis task completion after refresh');
           task = await waitForCompletedCommentAnalysisTask(page, expected, RESULT_TIMEOUT_SECONDS);
-        } else if (task.progress < 100) {
-          task = await waitForPluginQueryTaskProgress(page, task, RESULT_TIMEOUT_SECONDS);
+          createdNewTask = Boolean(task?.taskKey);
         }
       }
     }
 
-    if (task?.taskKey && task.progress < 100) {
+    if (task?.taskKey && !createdNewTask && task.progress < 100) {
       logStep(`analysis task not ready yet: taskKey=${task.taskKey} progress=${task.progress}; waiting for plugin queryTask progress`);
       task = await waitForPluginQueryTaskProgress(page, task, RESULT_TIMEOUT_SECONDS);
     }
 
     const detailUrl = buildCommentDetailUrl(task);
-    logStep(`analysis task ready: taskKey=${task.taskKey} site=${task.site} shopId=${task.shopId} itemId=${task.itemId}`);
+    logStep(`analysis task link ready: taskKey=${task.taskKey} site=${task.site} shopId=${task.shopId} itemId=${task.itemId} progress=${task.progress}`);
     logStep(`opening comment detail page: ${detailUrl}`);
 
     await openShopdoraPage(page, detailUrl);
@@ -2406,11 +2455,13 @@ cli({
     await page.installInterceptor(SHOPDORA_API_CAPTURE_PATTERN);
     await installShopdoraApiUrlInterceptor(page);
     await sleepAction(page);
+    await assertCommentSummaryAvailable(page);
     const openedCommentDetailTab = await openCommentDetailTabIfPresent(page);
     if (openedCommentDetailTab) {
       logStep('comment detail tab is ready');
       await sleepAction(page);
     } else {
+      await assertCommentSummaryAvailable(page);
       logStep('comment detail tab/detail panel not found after opening newComment; exiting early');
       throw new CommandExecutionError(
         'shopdora product-shopdora-download could not enter the comment detail view',
@@ -2447,6 +2498,7 @@ export const __test__ = {
   SHOPDORA_COMMENT_DETAIL_URL,
   SHOPDORA_COMMENT_LIST_API_URL,
   SHOPDORA_COMMENT_EXPORT_API_URL,
+  SHOPDORA_INSUFFICIENT_COMMENT_SUMMARY_MESSAGE,
   OUTPUT_COLUMNS,
   RESULT_TIMEOUT_SECONDS,
   DOWNLOAD_TIMEOUT_SECONDS,
@@ -2464,6 +2516,8 @@ export const __test__ = {
   selectCommentAnalysisRegion,
   buildForceDomClickScript,
   buildIsCommentDetailVisibleScript,
+  buildReadCommentSummaryUnavailableScript,
+  assertCommentSummaryAvailable,
   buildReadRangeInputValuesScript,
   buildInstallShopdoraApiUrlInterceptorScript,
   installShopdoraApiUrlInterceptor,

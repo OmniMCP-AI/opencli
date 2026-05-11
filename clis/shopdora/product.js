@@ -20,6 +20,7 @@ const SHOPDORA_API_CAPTURE_ARRAY = '__opencli_shopdora_product_xhr';
 const LOG_PREFIX = '[shopdora product]';
 const ACTION_WAIT_MIN_SECONDS = 0.5;
 const ACTION_WAIT_MAX_SECONDS = 1;
+const DEFAULT_SHOPEE_IMAGE_REGION = 'sg';
 const SHOPEE_REGION_OPTIONS = [
   { site: 'tw', title: '台湾', domains: ['shopee.tw', 'xiapi.xiapibuy.com'] },
   { site: 'sg', title: '新加坡', domains: ['shopee.sg', 'sg.xiapibuy.com'] },
@@ -130,6 +131,24 @@ function getShopeeRegionOptionFromUrl(shopeeUrl) {
   } catch {
     return null;
   }
+}
+
+function getShopeeImageRegionFromUrl(shopeeUrl) {
+  return getShopeeRegionOptionFromUrl(shopeeUrl)?.site || DEFAULT_SHOPEE_IMAGE_REGION;
+}
+
+function normalizeShopdoraImageUrl(value, shopeeUrl = '') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (/^(data|blob):/i.test(raw)) return raw;
+
+  const imageKey = raw
+    .replace(/^\/+/, '')
+    .replace(/^file\/+/i, '');
+  const region = getShopeeImageRegionFromUrl(shopeeUrl);
+  return imageKey ? `https://down-${region}.img.susercontent.com/file/${imageKey}` : '';
 }
 
 function buildResolveTargetSelectorScript(target) {
@@ -675,7 +694,7 @@ function mapProductRecordToRow(item, shopeeUrl, loginMessage) {
     status: item?.status ?? '',
     shelf_time: item?.shelfTime ?? '',
     shop_start_time: item?.shopStartTime ?? '',
-    image_url: item?.imageUrl ?? '',
+    image_url: normalizeShopdoraImageUrl(item?.imageUrl, shopeeUrl),
     cate_rank: item?.cateRank ?? '',
     cate_rank_change_d: item?.cateRankChangeD ?? '',
     cate_rank_change_w: item?.cateRankChangeW ?? '',
@@ -783,6 +802,8 @@ export const __test__ = {
   SEARCH_BUTTON_TEXTS,
   normalizeShopeeUrl,
   getShopeeRegionOptionFromUrl,
+  getShopeeImageRegionFromUrl,
+  normalizeShopdoraImageUrl,
   buildResolveTargetSelectorScript,
   buildSetInputValueScript,
   buildReadRegionRadioStateScript,

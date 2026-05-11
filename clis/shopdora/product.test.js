@@ -9,6 +9,8 @@ const {
   SHOPEE_REGION_OPTIONS,
   normalizeShopeeUrl,
   getShopeeRegionOptionFromUrl,
+  getShopeeImageRegionFromUrl,
+  normalizeShopdoraImageUrl,
   buildResolveTargetSelectorScript,
   buildSetInputValueScript,
   parseInterceptedPayload,
@@ -50,6 +52,21 @@ describe('shopdora product adapter', () => {
     expect(getShopeeRegionOptionFromUrl('https://shopee.com.my/product/1/2')).toMatchObject({ site: 'my', title: '马来西亚' });
     expect(() => normalizeShopeeUrl('')).toThrow('A Shopee product URL is required.');
     expect(() => normalizeShopeeUrl('not-a-url')).toThrow('shopdora product requires a valid absolute Shopee product URL.');
+  });
+
+  it('normalizes Shopdora image keys into Shopee image URLs', () => {
+    expect(getShopeeImageRegionFromUrl('https://shopee.sg/product/1/2')).toBe('sg');
+    expect(getShopeeImageRegionFromUrl('https://shopee.com.my/product/1/2')).toBe('my');
+    expect(normalizeShopdoraImageUrl('sg-11134202-7rblu-lm8vu8pclp3ufe', 'https://shopee.sg/product/1/2')).toBe(
+      'https://down-sg.img.susercontent.com/file/sg-11134202-7rblu-lm8vu8pclp3ufe',
+    );
+    expect(normalizeShopdoraImageUrl('sg-11134202-7rblu-lm8vu8pclp3ufe', 'https://shopee.com.my/product/1/2')).toBe(
+      'https://down-my.img.susercontent.com/file/sg-11134202-7rblu-lm8vu8pclp3ufe',
+    );
+    expect(normalizeShopdoraImageUrl('https://down-sg.img.susercontent.com/file/sg-11134202-7rblu-lm8vu8pclp3ufe')).toBe(
+      'https://down-sg.img.susercontent.com/file/sg-11134202-7rblu-lm8vu8pclp3ufe',
+    );
+    expect(normalizeShopdoraImageUrl('')).toBe('');
   });
 
   it('builds selectors and input scripts around the shopdora form', () => {
@@ -149,9 +166,20 @@ describe('shopdora product adapter', () => {
       name: 'HFA Men\'s Cotton Essential Casual Shorts',
       sales_m: 434,
       sales_7day: 10,
+      image_url: 'https://down-sg.img.susercontent.com/file/sg-11134207-7rbk0-lkrt3annwx2eb1',
       hot_cluster_name: 'Men\'s Casual Shorts',
       cate_ch_path: '男装-短裤',
     });
+  });
+
+  it('maps image_url with the host for the Shopee URL region', () => {
+    const row = mapProductRecordToRow({
+      itemId: '18892247931',
+      shopId: '282945261',
+      imageUrl: 'sg-11134207-7rbk0-lkrt3annwx2eb1',
+    }, 'https://shopee.com.my/product/282945261/18892247931', '');
+
+    expect(row.image_url).toBe('https://down-my.img.susercontent.com/file/sg-11134207-7rbk0-lkrt3annwx2eb1');
   });
 
   it('navigates, triggers the search request, and returns mapped rows', async () => {

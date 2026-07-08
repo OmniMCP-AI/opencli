@@ -161,6 +161,47 @@ describe('BrowserBridge state', () => {
     await expect(bridge.connect()).rejects.toThrow('Session is closing');
   });
 
+  it('passes the config default through connect() as preferredContextId during readiness', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-bridge-profile-'));
+    fs.writeFileSync(
+      path.join(configDir, 'browser-profiles.json'),
+      JSON.stringify({ version: 1, aliases: {}, defaultContextId: 'zvypsyje' }),
+    );
+    vi.stubEnv('OPENCLI_CONFIG_DIR', configDir);
+    vi.stubEnv('OPENCLI_PROFILE', '');
+
+    const ensureSpy = vi.spyOn(daemonLifecycle, 'ensureBrowserBridgeReady').mockResolvedValue({
+      health: {
+        state: 'ready',
+        status: {
+          ok: true,
+          pid: 1,
+          uptime: 0,
+          extensionConnected: true,
+          pending: 0,
+          memoryMB: 0,
+          port: 19825,
+        },
+      },
+      spawnedProcess: null,
+    });
+
+    try {
+      const bridge = new BrowserBridge();
+      await bridge.connect({ session: 'state-test' });
+
+      expect(ensureSpy).toHaveBeenCalledWith(expect.objectContaining({
+        contextId: undefined,
+        preferredContextId: 'zvypsyje',
+      }));
+    } finally {
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('fails fast when daemon is running but extension is disconnected (same version)', async () => {
     const { PKG_VERSION } = await import('./version.js');
     vi.spyOn(daemonTransport, 'getDaemonHealth').mockResolvedValue({

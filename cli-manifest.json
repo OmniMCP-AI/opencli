@@ -30778,6 +30778,189 @@
     "sourceFile": "semanticscholar/search.js"
   },
   {
+    "site": "shein",
+    "name": "aftersales",
+    "description": "拉取 SHEIN 后台售后订单并按商品摊平",
+    "access": "read",
+    "example": "opencli shein aftersales GSH18U09700UNAC -f json",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "businessNo",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "订单号精准搜索，如 GSH18U09700UNAC；多个可用逗号分隔"
+      },
+      {
+        "name": "perPage",
+        "type": "int",
+        "default": 50,
+        "required": false,
+        "help": "列表接口每页数量"
+      },
+      {
+        "name": "quickType",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "列表接口 quickType"
+      },
+      {
+        "name": "orderSubStatus",
+        "type": "int",
+        "required": false,
+        "help": "精准搜索时附加的售后子状态过滤；不传则不过滤"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "required": false,
+        "help": "最多获取的售后订单数量；不传则拉取全部"
+      },
+      {
+        "name": "concurrency",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "详情接口并发数"
+      },
+      {
+        "name": "detailDelayMs",
+        "type": "int",
+        "default": 500,
+        "required": false,
+        "help": "详情请求间隔毫秒数，用于降低触发风控风险"
+      },
+      {
+        "name": "maxPages",
+        "type": "int",
+        "required": false,
+        "help": "最多拉取页数，调试用"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 900,
+        "required": false,
+        "help": "整条 SHEIN 售后命令总超时时间（秒）；全量拉取建议调大"
+      },
+      {
+        "name": "requestTimeout",
+        "type": "int",
+        "default": 60,
+        "required": false,
+        "help": "单个 SHEIN 页面 API 请求超时时间（秒）"
+      },
+      {
+        "name": "retryAttempts",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "页面 API 网络/5xx 失败重试次数"
+      },
+      {
+        "name": "retryDelayMs",
+        "type": "int",
+        "default": 1000,
+        "required": false,
+        "help": "页面 API 重试基础间隔毫秒；会按尝试次数线性递增"
+      }
+    ],
+    "columns": [
+      "requestTime",
+      "aftersalesOrderNo",
+      "returnOrderNo",
+      "orderNo",
+      "site",
+      "orderSubStatusName",
+      "aftersalesResolutionPlanName",
+      "refundMethod",
+      "etaTime",
+      "goodsTitle",
+      "goodsSn",
+      "suffix",
+      "skuSn",
+      "quantity",
+      "afterSalesReason",
+      "buyerInstruction",
+      "returnExpressNos",
+      "return_attachments",
+      "priceAmount",
+      "checkEstimateIncomeMoney",
+      "returnExpense",
+      "performancePrice",
+      "promotionAmount",
+      "refundRatio",
+      "estimateIncomeMoney",
+      "goodsSettlePrice",
+      "goodsServiceCharge",
+      "freezeAmount"
+    ],
+    "defaultFormat": "json",
+    "type": "js",
+    "modulePath": "shein/aftersales.js",
+    "sourceFile": "shein/aftersales.js",
+    "navigateBefore": false,
+    "defaultWindowMode": "foreground"
+  },
+  {
+    "site": "shein",
+    "name": "login",
+    "description": "Open SHEIN seller login and wait until the GSP session is ready",
+    "access": "write",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300,
+        "required": false,
+        "help": "Maximum seconds to wait for the user to finish login"
+      }
+    ],
+    "columns": [
+      "status",
+      "logged_in",
+      "site",
+      "store_site",
+      "site_id",
+      "page_title"
+    ],
+    "type": "js",
+    "modulePath": "shein/auth.js",
+    "sourceFile": "shein/auth.js",
+    "navigateBefore": false,
+    "siteSession": "persistent",
+    "defaultWindowMode": "foreground"
+  },
+  {
+    "site": "shein",
+    "name": "whoami",
+    "description": "Check whether the SHEIN seller GSP session is ready",
+    "access": "read",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [],
+    "columns": [
+      "logged_in",
+      "site",
+      "store_site",
+      "site_id",
+      "page_title"
+    ],
+    "type": "js",
+    "modulePath": "shein/auth.js",
+    "sourceFile": "shein/auth.js",
+    "navigateBefore": false,
+    "siteSession": "persistent"
+  },
+  {
     "site": "shopdora",
     "name": "product",
     "description": "Query Shopdora product data from a Shopee product URL",

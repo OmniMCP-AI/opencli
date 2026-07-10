@@ -151,6 +151,9 @@ def looks_retryable_cli_failure(text: str) -> bool:
         "failed to fetch",
         "browser exec command timed out",
         "capture timeout",
+        "search button not found",
+        "inspected target navigated or closed",
+        "target closed",
         "aborterror",
         "networkerror",
         "fetch failed after",
@@ -190,22 +193,39 @@ def ensure_shein_session(args: argparse.Namespace, repo_root: Path, opencli: lis
         return
 
     whoami_cmd = [*opencli, "shein", "whoami", "-f", "json"]
-    print("Checking SHEIN session with whoami...")
-    whoami = run_command(whoami_cmd, repo_root, args.login_timeout)
-    if whoami.returncode == 0:
-        print("SHEIN session is ready.")
-        return
+    last_output = ""
+    for attempt in range(1, args.attempts + 1):
+        print(f"Checking SHEIN session with whoami (attempt {attempt}/{args.attempts})...")
+        whoami = run_command(whoami_cmd, repo_root, args.login_timeout)
+        if whoami.returncode == 0:
+            print("SHEIN session is ready.")
+            return
 
-    output = command_output(whoami)
-    if not looks_auth_required(output) and not args.login_on_retry:
-        raise SyncError(f"SHEIN whoami failed with exit code {whoami.returncode}:\n{output}")
+        output = command_output(whoami)
+        auth_required = looks_auth_required(output)
+        retryable = looks_retryable_cli_failure(output)
+        if not auth_required and not retryable and not args.login_on_retry:
+            raise SyncError(f"SHEIN whoami failed with exit code {whoami.returncode}:\n{output}")
 
-    print("SHEIN session is not ready; running login CLI before fetching aftersales...")
-    login = run_command(build_shein_login_command(opencli, args), repo_root, args.login_timeout)
-    if login.returncode != 0:
-        raise SyncError(f"SHEIN login CLI failed with exit code {login.returncode}:\n{command_output(login)}")
-    if args.login_wait_seconds > 0:
-        time.sleep(args.login_wait_seconds)
+        print("SHEIN session is not ready; running login CLI before fetching aftersales...")
+        login = run_command(build_shein_login_command(opencli, args), repo_root, args.login_timeout)
+        last_output = command_output(login)
+        if login.returncode == 0:
+            if args.login_wait_seconds > 0:
+                time.sleep(args.login_wait_seconds)
+            verify = run_command(whoami_cmd, repo_root, args.login_timeout)
+            if verify.returncode == 0:
+                print("SHEIN session is ready after login.")
+                return
+            last_output = command_output(verify)
+        elif not looks_retryable_cli_failure(last_output) and not looks_auth_required(last_output):
+            raise SyncError(f"SHEIN login CLI failed with exit code {login.returncode}:\n{last_output}")
+
+        if attempt < args.attempts and args.retry_delay_seconds > 0:
+            print(f"SHEIN session preflight failed; retrying in {args.retry_delay_seconds}s...")
+            time.sleep(args.retry_delay_seconds)
+
+    raise SyncError(f"SHEIN login/session preflight failed after {args.attempts} attempts:\n{last_output}")
 
 
 def extract_json_array(text: str) -> list[dict[str, Any]]:

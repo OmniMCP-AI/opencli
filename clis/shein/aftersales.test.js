@@ -13,11 +13,17 @@ describe('shein aftersales adapter', () => {
             aftersalesResolutionPlanName: '退货退款',
             requestTime: '2026-07-06 11:44:08',
             afterSalesReasonList: [{ reasonName: '发错退回' }],
+            returnExpressInfoList: [
+                { expressNo: 'EXP001' },
+                { expressNo: 'EXP002' },
+                { expressNo: 'https://img.shein.com/not-an-express-no.jpg' },
+            ],
             afterSalesStatusGuide: { etaTime: '2026-07-09 15:48:31' },
             afterSalesOrderGoodsInfos: [
                 {
                     goodsId: 293199253,
                     entityId: 2383363172116501,
+                    goodsThumb: '//img.shein.com/cart-1.jpg',
                     goodsTitle: 'cart 1',
                     goodsSn: '251219-黑白收纳桌',
                     skuSn: 'ZWJ-black',
@@ -46,10 +52,11 @@ describe('shein aftersales adapter', () => {
             ],
         }, {
             buyerInstruction: 'Please check package parts',
+            resolutionPlanShowName: '认可买家诉求，同意退货退款',
+            sellerInstruction: 'Seller provided explanation',
             returnExpressInfoList: [
                 { expressNo: 'EXP001' },
-                { expressNo: 'EXP002' },
-                { expressNo: 'EXP001' },
+                { expressNo: 'EXP003' },
             ],
             goodsInfo: {
                 goodsList: [
@@ -89,7 +96,10 @@ describe('shein aftersales adapter', () => {
             etaTime: '2026-07-09 15:48:31',
             goodsTitle: 'cart 1',
             refundMethod: '退货退款',
-            afterSalesReason: ['发错退回'],
+            sellerResolutionPlanName: '认可买家诉求，同意退货退款',
+            sellerInstruction: 'Seller provided explanation',
+            goodsThumb: 'https://img.shein.com/cart-1.jpg',
+            afterSalesReason: '发错退回',
             buyerInstruction: 'Please check package parts',
             returnExpressNos: ['EXP001', 'EXP002'],
             return_attachments: ['https://img.shein.com/a.jpg'],
@@ -119,8 +129,17 @@ describe('shein aftersales adapter', () => {
 
         expect(rows).toHaveLength(1);
         expect(rows[0].return_attachments).toEqual(['https://img.shein.com/evidence.jpg']);
-        expect(rows[0].afterSalesReason).toEqual(['发错退回']);
+        expect(rows[0].afterSalesReason).toEqual('发错退回');
         expect(rows[0].buyerInstruction).toEqual('No return order instruction');
+    });
+
+    it('joins multiple after-sales reasons into a comma-separated string', () => {
+        const rows = __test__.flattenSheinAftersalesOrder({
+            afterSalesReasonList: [{ reasonName: '商品质量问题' }, { reasonName: '发错退回' }],
+            afterSalesOrderGoodsInfos: [{ goodsTitle: 'rack', quantity: 1 }],
+        }, {});
+
+        expect(rows[0].afterSalesReason).toEqual('商品质量问题,发错退回');
     });
 
     it('derives refund method from resolution plan and refund ratio', () => {
@@ -198,6 +217,48 @@ describe('shein aftersales adapter', () => {
         expect(detail.info.buyerInstruction).toBe('hit');
     });
 
+    it('extracts optional evidence capture entries by aftersalesOrderNo', () => {
+        const evidence = __test__.extractEvidenceFromCapture([
+            {
+                url: '/gsp/aftersalesOrder/evidenceWorkOrderDetail',
+                requestBodyPreview: '{"aftersalesOrderNo":"wrong"}',
+                responsePreview: '{"code":0,"info":[{"buyerInstruction":"skip"}]}',
+                responseStatus: 200,
+            },
+            {
+                url: '/gsp/aftersalesOrder/evidenceWorkOrderDetail',
+                requestBodyPreview: '{"aftersalesOrderNo":"AC2606182956785667"}',
+                responsePreview: '{"code":0,"info":[{"buyerInstruction":"hit","resolutionPlanShowName":"认可买家诉求，同意仅退款"}]}',
+                responseStatus: 200,
+            },
+        ], 'AC2606182956785667');
+
+        expect(evidence.info[0].buyerInstruction).toBe('hit');
+        expect(evidence.info[0].resolutionPlanShowName).toBe('认可买家诉求，同意仅退款');
+    });
+
+    it('merges evidence-only fields into detail payload without losing detail amounts', () => {
+        const merged = __test__.mergeDetailAndEvidence({
+            info: {
+                buyerInstruction: '',
+                goodsInfo: { goodsList: [{ refundRatio: 30, goodsSettlePrice: 2880 }] },
+            },
+        }, {
+            info: [{
+                buyerInstruction: '配件损坏',
+                resolutionPlanShowName: '认可买家诉求，同意仅退款',
+                sellerInstruction: '卖家说明',
+                buyerImages: ['//img.shein.com/evidence.jpg'],
+            }],
+        });
+
+        expect(merged.buyerInstruction).toBe('配件损坏');
+        expect(merged.resolutionPlanShowName).toBe('认可买家诉求，同意仅退款');
+        expect(merged.sellerInstruction).toBe('卖家说明');
+        expect(merged.buyerImages).toEqual(['//img.shein.com/evidence.jpg']);
+        expect(merged.goodsInfo.goodsList[0].refundRatio).toBe(30);
+    });
+
     it('builds subsequent page payloads by copying page-1 request and overriding page', () => {
         const payload = __test__.buildPaginatedListBody({
             quickType: 0,
@@ -212,6 +273,21 @@ describe('shein aftersales adapter', () => {
             perPage: 20,
             keyword: 'keep',
         });
+    });
+
+    it('normalizes since request time input and filters strictly newer list rows', () => {
+        expect(__test__.normalizeRequestTimeInput('2026-6-2')).toBe('2026-06-02 00:00:00');
+        expect(__test__.normalizeRequestTimeInput('2026-6-2 9:5')).toBe('2026-06-02 09:05:00');
+        expect(__test__.normalizeRequestTimeInput('2026-06-02 19:26:29')).toBe('2026-06-02 19:26:29');
+
+        const filtered = __test__.filterOrdersAfterSince([
+            { aftersalesOrderNo: 'new', requestTime: '2026-07-09 12:25:53' },
+            { aftersalesOrderNo: 'same', requestTime: '2026-06-02 00:00:00' },
+            { aftersalesOrderNo: 'old', requestTime: '2026-06-01 23:59:59' },
+        ], '2026-06-02 00:00:00');
+
+        expect(filtered.orders.map((order) => order.aftersalesOrderNo)).toEqual(['new']);
+        expect(filtered.shouldStop).toBe(true);
     });
 
     it('uses randomized delay bounds between 2 and 4 seconds', () => {

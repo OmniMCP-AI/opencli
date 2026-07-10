@@ -608,6 +608,9 @@ def main() -> int:
         print(f"Fetched {len(rows)} SHEIN feedback rows.")
         raw_path = save_raw_rows(rows, args.store, Path.cwd())
         print(f"Saved raw SHEIN JSON to {raw_path}")
+        if not rows:
+            print("No fresh SHEIN feedback rows; skipping MaybeAI sheet merge/write.")
+            return 0
         if args.dry_run:
             print(json.dumps(rows[:3], ensure_ascii=False, indent=2))
             return 0

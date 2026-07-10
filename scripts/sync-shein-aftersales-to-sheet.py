@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import http.client
 import os
 import re
 import shlex
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -25,6 +28,8 @@ from typing import Any
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=9"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
 DEFAULT_MAYBEAI_API_TIMEOUT = 300
+DEFAULT_MAYBEAI_API_ATTEMPTS = 3
+DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5
 DEFAULT_OPENCLI_CMD = "npm exec -- opencli"
 DEFAULT_STORE = "店3"
 
@@ -468,28 +473,51 @@ def sort_records_by_request_time_desc(records: list[dict[str, Any]]) -> list[dic
 
 
 class MaybeAIClient:
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(self, base_url: str, token: str, attempts: int = DEFAULT_MAYBEAI_API_ATTEMPTS, retry_delay_seconds: int = DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.attempts = max(1, attempts)
+        self.retry_delay_seconds = max(0, retry_delay_seconds)
 
     def post(self, path: str, payload: dict[str, Any], timeout: int = DEFAULT_MAYBEAI_API_TIMEOUT) -> dict[str, Any]:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}{path}",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8", "replace"))
-        except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", "replace")
-            raise SyncError(f"MaybeAI API {path} failed with HTTP {error.code}:\n{body}") from error
-        except urllib.error.URLError as error:
-            raise SyncError(f"MaybeAI API {path} failed: {error}") from error
+        last_error = ""
+        for attempt in range(1, self.attempts + 1):
+            request = urllib.request.Request(
+                f"{self.base_url}{path}",
+                data=data,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode("utf-8", "replace"))
+            except urllib.error.HTTPError as error:
+                body = error.read().decode("utf-8", "replace")
+                last_error = f"HTTP {error.code}:\n{body}"
+                if error.code not in {429, 500, 502, 503, 504} or attempt >= self.attempts:
+                    raise SyncError(f"MaybeAI API {path} failed with {last_error}") from error
+            except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError, http.client.HTTPException) as error:
+                last_error = str(error)
+                if attempt >= self.attempts:
+                    raise SyncError(f"MaybeAI API {path} failed after {self.attempts} attempts: {last_error}") from error
+
+            if self.retry_delay_seconds > 0:
+                print(f"MaybeAI API {path} failed on attempt {attempt}/{self.attempts}; retrying in {self.retry_delay_seconds}s...")
+                time.sleep(self.retry_delay_seconds)
+
+        raise SyncError(f"MaybeAI API {path} failed after {self.attempts} attempts: {last_error}")
+
+
+def build_maybeai_client(args: argparse.Namespace) -> MaybeAIClient:
+    return MaybeAIClient(
+        args.maybeai_base_url,
+        maybeai_token(),
+        attempts=args.maybeai_api_attempts,
+        retry_delay_seconds=args.maybeai_api_retry_delay_seconds,
+    )
 
 
 def resolve_worksheet_name(client: MaybeAIClient, doc_id: str, gid: str | None) -> str | None:
@@ -549,8 +577,7 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
         print(f"Using external since {REQUEST_TIME_FIELD}: {args.since_request_time}")
         return
 
-    token = maybeai_token()
-    client = MaybeAIClient(args.maybeai_base_url, token)
+    client = build_maybeai_client(args)
     target, _worksheet_name = build_sheet_target(args, client)
     existing_records = read_sheet_records(client, target, args.read_range)
     latest = max_request_time(existing_records, args.store)
@@ -563,8 +590,7 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
 
 
 def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
-    token = maybeai_token()
-    client = MaybeAIClient(args.maybeai_base_url, token)
+    client = build_maybeai_client(args)
     target, worksheet_name = build_sheet_target(args, client)
 
     existing_records = read_sheet_records(client, target, args.read_range)
@@ -639,6 +665,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worksheet-name", help="Optional worksheet name override.")
     parser.add_argument("--read-range", help="Optional existing data range to read before merging. Omitted by default so MaybeAI returns the whole worksheet.")
     parser.add_argument("--maybeai-base-url", default=DEFAULT_MAYBEAI_BASE_URL, help="MaybeAI API base URL.")
+    parser.add_argument("--maybeai-api-attempts", type=int, default=DEFAULT_MAYBEAI_API_ATTEMPTS, help=f"MaybeAI API retry attempts. Default: {DEFAULT_MAYBEAI_API_ATTEMPTS}")
+    parser.add_argument("--maybeai-api-retry-delay-seconds", type=int, default=DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS, help=f"Delay between MaybeAI API retries. Default: {DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS}")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")
     parser.add_argument("--profile", help="Optional OpenCLI Browser Bridge profile alias/id, e.g. profile1.")

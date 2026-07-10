@@ -5,9 +5,11 @@ const BASE_URL = 'https://sso.geiwohuo.com';
 const LIST_PAGE_URL = `${BASE_URL}/#/gsp/order-management/after-sales-list`;
 const LIST_API = `${BASE_URL}/gsp/aftersalesOrder/list`;
 const DETAIL_API = `${BASE_URL}/gsp/aftersalesOrder/detail`;
+const EVIDENCE_API = `${BASE_URL}/gsp/aftersalesOrder/evidenceWorkOrderDetail`;
 const CAPTURE_VAR = '__opencli_shein_capture';
 const CAPTURE_ERROR_VAR = '__opencli_shein_capture_errors';
 const CAPTURE_GUARD = '__opencli_shein_capture_patched';
+const EVIDENCE_UNSUPPORTED_CODES = new Set(['9967004']);
 const RANDOM_DELAY_MIN_MS = 2000;
 const RANDOM_DELAY_MAX_MS = 4000;
 
@@ -20,7 +22,10 @@ export const SHEIN_AFTERSALES_COLUMNS = [
     'orderSubStatusName',
     'aftersalesResolutionPlanName',
     'refundMethod',
+    'sellerResolutionPlanName',
+    'sellerInstruction',
     'etaTime',
+    'goodsThumb',
     'goodsTitle',
     'goodsSn',
     'suffix',
@@ -83,10 +88,10 @@ function listReasons(order, fallback) {
     const fromList = asRecordArray(order.afterSalesReasonList)
         .map((reason) => stringValue(reason.reasonName))
         .filter(Boolean);
-    if (fromList.length > 0) return fromList;
+    if (fromList.length > 0) return fromList.join(',');
     const raw = fallback?.reasons;
-    if (Array.isArray(raw)) return raw.map(stringValue).filter(Boolean);
-    return stringValue(raw).split(/[,，]/).map((item) => item.trim()).filter(Boolean);
+    if (Array.isArray(raw)) return raw.map(stringValue).filter(Boolean).join(',');
+    return stringValue(raw).split(/[,，]/).map((item) => item.trim()).filter(Boolean).join(',');
 }
 
 function goodsMatchScore(detailGoods, listGoods) {
@@ -119,9 +124,10 @@ function attachmentsForGoods(detail, listGoods, returnOrderNo, detailGoods = mat
     return normalizeAttachments(goodsList.flatMap((goods) => [...asArray(goods.images), ...asArray(goods.videos)]));
 }
 
-function returnExpressNos(detail) {
-    return [...new Set(asRecordArray(detail.returnExpressInfoList)
+function returnExpressNos(order) {
+    return [...new Set(asRecordArray(asObject(order).returnExpressInfoList)
         .map((item) => stringValue(item.expressNo).trim())
+        .filter((value) => !/^https?:\/\//i.test(value) && !value.startsWith('//'))
         .filter(Boolean))];
 }
 
@@ -156,7 +162,10 @@ export function flattenSheinAftersalesOrder(order, detail) {
             orderSubStatusName: stringValue(order.orderSubStatusName),
             aftersalesResolutionPlanName,
             refundMethod: refundMethod(aftersalesResolutionPlanName, refundRatio),
+            sellerResolutionPlanName: stringValue(detail.resolutionPlanShowName),
+            sellerInstruction: stringValue(detail.sellerInstruction),
             etaTime: stringValue(asObject(order.afterSalesStatusGuide).etaTime),
+            goodsThumb: normalizeUrl(goods.goodsThumb),
             goodsTitle: stringValue(goods.goodsTitle),
             goodsSn: stringValue(goods.goodsSn),
             suffix: stringValue(goods.suffix),
@@ -164,7 +173,7 @@ export function flattenSheinAftersalesOrder(order, detail) {
             quantity: numberOrNull(goods.quantity) ?? numberOrNull(goods.number) ?? 0,
             afterSalesReason: listReasons(order, detail),
             buyerInstruction: stringValue(detail.buyerInstruction),
-            returnExpressNos: returnExpressNos(detail),
+            returnExpressNos: returnExpressNos(order),
             return_attachments: attachmentsForGoods(detail, goods, returnOrderNo, detailGoods),
             priceAmount: numberOrNull(goods.priceAmount) ?? 0,
             checkEstimateIncomeMoney: numberOrNull(goods.checkEstimateIncomeMoney) ?? 0,
@@ -196,6 +205,27 @@ function parseNonNegativeInt(raw, label, fallback) {
         throw new CommandExecutionError(`${label} must be a non-negative integer. Received: "${String(raw)}"`);
     }
     return parsed;
+}
+
+function normalizeRequestTimeInput(raw) {
+    const text = stringValue(raw).trim();
+    if (!text) return '';
+    const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?$/);
+    if (!match) {
+        throw new CommandExecutionError(`--sinceRequestTime must be YYYY-M-D or YYYY-M-D HH:mm:ss. Received: "${text}"`);
+    }
+    const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+    const pad = (value) => String(Number(value)).padStart(2, '0');
+    return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`;
+}
+
+function filterOrdersAfterSince(orders, sinceRequestTime) {
+    const source = asRecordArray(orders);
+    if (!sinceRequestTime) return { orders: source, shouldStop: false };
+    return {
+        orders: source.filter((order) => stringValue(order.requestTime) > sinceRequestTime),
+        shouldStop: source.some((order) => stringValue(order.requestTime) <= sinceRequestTime),
+    };
 }
 
 function unwrapEvaluateResult(payload) {
@@ -289,6 +319,43 @@ function extractDetailFromCapture(entries, aftersalesOrderId) {
         throw new CommandExecutionError(`Failed to capture SHEIN detail response for aftersalesOrderId=${wantedId}`);
     }
     return ensureSuccessfulApiPayload(parseJsonText(match.responsePreview, 'SHEIN detail response'), 'detail response');
+}
+
+function extractEvidenceFromCapture(entries, aftersalesOrderNo) {
+    const wantedNo = stringValue(aftersalesOrderNo);
+    const match = [...asArray(entries)].reverse().find((entry) => {
+        const row = asObject(entry);
+        if (!urlMatchesApi(row.url, EVIDENCE_API)) return false;
+        if (!stringValue(row.responsePreview).trim()) return false;
+        const requestBody = asObject(parseJsonText(row.requestBodyPreview, 'SHEIN evidence request body'));
+        return !wantedNo || stringValue(requestBody.aftersalesOrderNo) === wantedNo;
+    });
+    if (!match) return { info: null };
+
+    const payload = parseJsonText(match.responsePreview, 'SHEIN evidence response');
+    if (payload?.code !== undefined && String(payload.code) !== '0') {
+        if (EVIDENCE_UNSUPPORTED_CODES.has(String(payload.code))) return { info: null };
+        return ensureSuccessfulApiPayload(payload, 'evidence response');
+    }
+    return ensureSuccessfulApiPayload(payload, 'evidence response');
+}
+
+function evidenceDetailInfo(payload) {
+    const info = payload?.info;
+    return asRecordArray(info)[0] || asObject(info);
+}
+
+function mergeDetailAndEvidence(detailPayload, evidencePayload) {
+    const primaryDetail = asObject(detailPayload?.info);
+    const evidenceDetail = evidenceDetailInfo(evidencePayload);
+    if (Object.keys(evidenceDetail).length === 0) return primaryDetail;
+    return {
+        ...evidenceDetail,
+        ...primaryDetail,
+        buyerInstruction: stringValue(evidenceDetail.buyerInstruction) || stringValue(primaryDetail.buyerInstruction),
+        resolutionPlanShowName: stringValue(evidenceDetail.resolutionPlanShowName) || stringValue(primaryDetail.resolutionPlanShowName),
+        sellerInstruction: stringValue(evidenceDetail.sellerInstruction) || stringValue(primaryDetail.sellerInstruction),
+    };
 }
 
 function buildPaginatedListBody(firstPageBody, page, perPageOverride) {
@@ -513,7 +580,7 @@ async function navigateWithinSheinApp(page, url, waitSeconds = 4) {
     await page.wait(waitSeconds);
 }
 
-function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false, reloadIfSameUrl = false }) {
+function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false, reloadIfSameUrl = false, settleAfterFirstMs = 0 }) {
     return `
       (async () => {
         const pattern = ${JSON.stringify(pattern)};
@@ -521,6 +588,7 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
         const targetUrl = ${JSON.stringify(targetUrl || '')};
         const clickSearch = ${clickSearch ? 'true' : 'false'};
         const reloadIfSameUrl = ${reloadIfSameUrl ? 'true' : 'false'};
+        const settleAfterFirstMs = ${JSON.stringify(settleAfterFirstMs)};
         const captures = [];
         const errors = [];
         let finished = false;
@@ -690,6 +758,9 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
           if (timedOut) {
             return { ok: false, reason: 'capture timeout', captures, errors, href: location.href };
           }
+          if (settleAfterFirstMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, settleAfterFirstMs));
+          }
           return { ok: true, captures, errors, href: location.href };
         } finally {
           restore();
@@ -698,13 +769,14 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
     `;
 }
 
-async function captureRequestViaPageTap(page, { pattern, timeoutMs, targetUrl, clickSearch, label, reloadIfSameUrl = false }) {
+async function captureRequestViaPageTap(page, { pattern, timeoutMs, targetUrl, clickSearch, label, reloadIfSameUrl = false, settleAfterFirstMs = 0 }) {
     const result = unwrapEvaluateResult(await page.evaluate(buildTapCaptureJs({
         pattern,
         timeoutMs,
         targetUrl,
         clickSearch,
         reloadIfSameUrl,
+        settleAfterFirstMs,
     })));
     if (!result?.ok) {
         throw new CommandExecutionError(`${label} failed: ${stringValue(result?.reason) || 'unknown reason'}`);
@@ -765,28 +837,47 @@ async function fetchListPage(page, headers, baseBody, pageNo, options) {
 
 async function captureListPageOne(page, options) {
     await ensureSheinListPage(page);
-    const captures = await captureRequestViaPageTap(page, {
-        pattern: '/gsp/aftersalesOrder/list',
-        timeoutMs: options.timeoutMs,
-        targetUrl: LIST_PAGE_URL,
-        clickSearch: true,
-        label: 'SHEIN first-page list response',
-    });
+    let captures;
+    try {
+        captures = await captureRequestViaPageTap(page, {
+            pattern: '/gsp/aftersalesOrder/list',
+            timeoutMs: options.timeoutMs,
+            targetUrl: LIST_PAGE_URL,
+            clickSearch: true,
+            label: 'SHEIN first-page list response',
+        });
+    } catch (error) {
+        const message = String(error?.message || error);
+        if (!message.includes('search button not found') && !message.includes('capture timeout')) throw error;
+        captures = await captureRequestViaPageTap(page, {
+            pattern: '/gsp/aftersalesOrder/list',
+            timeoutMs: options.timeoutMs,
+            targetUrl: LIST_PAGE_URL,
+            clickSearch: false,
+            reloadIfSameUrl: true,
+            label: 'SHEIN first-page list response',
+        });
+    }
     return extractListCaptureContext(captures);
 }
 
-async function captureDetailPayload(page, aftersalesOrderId, options) {
+async function captureDetailPayload(page, order, options) {
+    const aftersalesOrderId = stringValue(order.id || order.aftersalesOrderId);
+    const aftersalesOrderNo = stringValue(order.aftersalesOrderNo);
     const detailUrl = `${BASE_URL}/#/gsp/order-management/after-sales-detail?aftersalesOrderId=${encodeURIComponent(String(aftersalesOrderId))}`;
     const label = `SHEIN detail response for ${aftersalesOrderId}`;
     await navigateWithinSheinApp(page, LIST_PAGE_URL, 2);
     const captures = await captureRequestViaPageTap(page, {
-        pattern: '/gsp/aftersalesOrder/detail',
+        pattern: '/gsp/aftersalesOrder/',
         timeoutMs: options.timeoutMs,
         targetUrl: detailUrl,
         clickSearch: false,
         label,
+        settleAfterFirstMs: 2000,
     });
-    return extractDetailFromCapture(captures, aftersalesOrderId);
+    const detailPayload = extractDetailFromCapture(captures, aftersalesOrderId);
+    const evidencePayload = extractEvidenceFromCapture(captures, aftersalesOrderNo);
+    return { info: mergeDetailAndEvidence(detailPayload, evidencePayload) };
 }
 
 async function ensureSheinListPage(page) {
@@ -818,28 +909,33 @@ export async function collectSheinAftersalesRows(page, kwargs) {
         timeoutMs: parsePositiveInt(kwargs.requestTimeout, '--requestTimeout', 60) * 1000,
         retryAttempts: parsePositiveInt(kwargs.retryAttempts, '--retryAttempts', 3),
         retryDelayMs: parseNonNegativeInt(kwargs.retryDelayMs, '--retryDelayMs', 1000),
+        sinceRequestTime: normalizeRequestTimeInput(kwargs.sinceRequestTime),
     };
     const pageOne = await captureListPageOne(page, options);
     const pageOneInfo = asObject(pageOne.response.info);
     const pageSize = (numberOrNull(pageOne.body.perPage) ?? asRecordArray(pageOneInfo.data).length) || 50;
     const total = getTotalCount(pageOneInfo);
     const allOrders = [];
-    const firstOrders = asRecordArray(pageOneInfo.data);
+    const firstPage = filterOrdersAfterSince(pageOneInfo.data, options.sinceRequestTime);
 
-    allOrders.push(...(options.limit == null ? firstOrders : firstOrders.slice(0, options.limit)));
+    allOrders.push(...(options.limit == null ? firstPage.orders : firstPage.orders.slice(0, options.limit)));
 
     for (let pageNo = 2; pageNo <= options.maxPages; pageNo++) {
         if (options.limit != null && allOrders.length >= options.limit) break;
+        if (firstPage.shouldStop) break;
         if (total !== null && allOrders.length >= total) break;
 
         await waitRandomDelay(page);
         const payload = await fetchListPage(page, pageOne.headers, pageOne.body, pageNo, options);
         const info = asObject(payload.info);
-        const orders = asRecordArray(info.data);
-        if (orders.length === 0) break;
+        const rawOrders = asRecordArray(info.data);
+        const filtered = filterOrdersAfterSince(rawOrders, options.sinceRequestTime);
+        const orders = filtered.orders;
+        if (rawOrders.length === 0) break;
         const remaining = options.limit == null ? orders.length : Math.max(0, options.limit - allOrders.length);
         allOrders.push(...(options.limit == null ? orders : orders.slice(0, remaining)));
-        if (orders.length < pageSize) break;
+        if (filtered.shouldStop) break;
+        if (rawOrders.length < pageSize) break;
     }
 
     const rows = [];
@@ -850,7 +946,7 @@ export async function collectSheinAftersalesRows(page, kwargs) {
             continue;
         }
         await waitRandomDelay(page);
-        const detailPayload = await captureDetailPayload(page, aftersalesOrderId, options);
+        const detailPayload = await captureDetailPayload(page, order, options);
         rows.push(...flattenSheinAftersalesOrder(order, asObject(detailPayload.info)));
     }
     return rows;
@@ -861,7 +957,7 @@ cli({
     name: 'aftersales',
     access: 'read',
     description: '拉取 SHEIN 后台售后订单并按商品摊平',
-    example: 'opencli shein aftersales GSH18U09700UNAC -f json',
+    example: 'opencli shein aftersales --limit 20 -f json',
     domain: 'sso.geiwohuo.com',
     strategy: Strategy.COOKIE,
     browser: true,
@@ -869,15 +965,10 @@ cli({
     defaultWindowMode: 'foreground',
     defaultFormat: 'json',
     args: [
-        { name: 'businessNo', positional: true, help: '订单号精准搜索，如 GSH18U09700UNAC；多个可用逗号分隔' },
-        { name: 'perPage', type: 'int', default: 50, help: '列表接口每页数量' },
-        { name: 'quickType', type: 'int', default: 0, help: '列表接口 quickType' },
-        { name: 'orderSubStatus', type: 'int', help: '精准搜索时附加的售后子状态过滤；不传则不过滤' },
         { name: 'limit', type: 'int', help: '最多获取的售后订单数量；不传则拉取全部' },
-        { name: 'concurrency', type: 'int', default: 1, help: '详情接口并发数' },
-        { name: 'detailDelayMs', type: 'int', default: 500, help: '详情请求间隔毫秒数，用于降低触发风控风险' },
+        { name: 'sinceRequestTime', help: '只获取 requestTime 大于该时间的售后单，支持 YYYY-M-D 或 YYYY-M-D HH:mm:ss' },
         { name: 'maxPages', type: 'int', help: '最多拉取页数，调试用' },
-        { name: 'timeout', type: 'int', default: 900, help: '整条 SHEIN 售后命令总超时时间（秒）；全量拉取建议调大' },
+        { name: 'timeout', type: 'int', default: 1800, help: '整条 SHEIN 售后命令总超时时间（秒）；全量拉取建议调大' },
         { name: 'requestTimeout', type: 'int', default: 60, help: '单个 SHEIN 页面 API 请求超时时间（秒）' },
         { name: 'retryAttempts', type: 'int', default: 3, help: '页面 API 网络/5xx 失败重试次数' },
         { name: 'retryDelayMs', type: 'int', default: 1000, help: '页面 API 重试基础间隔毫秒；会按尝试次数线性递增' },
@@ -891,6 +982,10 @@ export const __test__ = {
     ensureSheinListPage,
     extractListCaptureContext,
     extractDetailFromCapture,
+    extractEvidenceFromCapture,
+    mergeDetailAndEvidence,
+    normalizeRequestTimeInput,
+    filterOrdersAfterSince,
     buildPaginatedListBody,
     randomDelayMs,
 };

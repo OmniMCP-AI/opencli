@@ -30782,38 +30782,11 @@
     "name": "aftersales",
     "description": "拉取 SHEIN 后台售后订单并按商品摊平",
     "access": "read",
-    "example": "opencli shein aftersales GSH18U09700UNAC -f json",
+    "example": "opencli shein aftersales --limit 20 -f json",
     "domain": "sso.geiwohuo.com",
     "strategy": "cookie",
     "browser": true,
     "args": [
-      {
-        "name": "businessNo",
-        "type": "str",
-        "required": false,
-        "positional": true,
-        "help": "订单号精准搜索，如 GSH18U09700UNAC；多个可用逗号分隔"
-      },
-      {
-        "name": "perPage",
-        "type": "int",
-        "default": 50,
-        "required": false,
-        "help": "列表接口每页数量"
-      },
-      {
-        "name": "quickType",
-        "type": "int",
-        "default": 0,
-        "required": false,
-        "help": "列表接口 quickType"
-      },
-      {
-        "name": "orderSubStatus",
-        "type": "int",
-        "required": false,
-        "help": "精准搜索时附加的售后子状态过滤；不传则不过滤"
-      },
       {
         "name": "limit",
         "type": "int",
@@ -30821,18 +30794,10 @@
         "help": "最多获取的售后订单数量；不传则拉取全部"
       },
       {
-        "name": "concurrency",
-        "type": "int",
-        "default": 1,
+        "name": "sinceRequestTime",
+        "type": "str",
         "required": false,
-        "help": "详情接口并发数"
-      },
-      {
-        "name": "detailDelayMs",
-        "type": "int",
-        "default": 500,
-        "required": false,
-        "help": "详情请求间隔毫秒数，用于降低触发风控风险"
+        "help": "只获取 requestTime 大于该时间的售后单，支持 YYYY-M-D 或 YYYY-M-D HH:mm:ss"
       },
       {
         "name": "maxPages",
@@ -30843,7 +30808,7 @@
       {
         "name": "timeout",
         "type": "int",
-        "default": 900,
+        "default": 1800,
         "required": false,
         "help": "整条 SHEIN 售后命令总超时时间（秒）；全量拉取建议调大"
       },
@@ -30878,7 +30843,10 @@
       "orderSubStatusName",
       "aftersalesResolutionPlanName",
       "refundMethod",
+      "sellerResolutionPlanName",
+      "sellerInstruction",
       "etaTime",
+      "goodsThumb",
       "goodsTitle",
       "goodsSn",
       "suffix",
@@ -30908,6 +30876,106 @@
   },
   {
     "site": "shein",
+    "name": "feedback",
+    "description": "拉取 SHEIN 商品评价列表",
+    "access": "read",
+    "example": "opencli shein feedback --limit 20 -f json",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "required": false,
+        "help": "最多获取的评价数量；不传则拉取全部"
+      },
+      {
+        "name": "perPage",
+        "type": "int",
+        "required": false,
+        "help": "列表接口每页数量；不传则沿用页面请求"
+      },
+      {
+        "name": "maxPages",
+        "type": "int",
+        "required": false,
+        "help": "最多拉取页数，调试用"
+      },
+      {
+        "name": "sinceCommentTime",
+        "type": "str",
+        "required": false,
+        "help": "只获取 commentTime 大于该时间的评价，支持 YYYY-M-D 或 YYYY-M-D HH:mm[:ss]"
+      },
+      {
+        "name": "untilCommentTime",
+        "type": "str",
+        "required": false,
+        "help": "只获取 commentTime 小于等于该时间的评价，支持 YYYY-M-D 或 YYYY-M-D HH:mm[:ss]"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 3600,
+        "required": false,
+        "help": "整条 SHEIN 商品评价命令总超时时间（秒）；全量拉取建议调大"
+      },
+      {
+        "name": "requestTimeout",
+        "type": "int",
+        "default": 60,
+        "required": false,
+        "help": "单个 SHEIN 页面 API 请求超时时间（秒）"
+      },
+      {
+        "name": "retryAttempts",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "页面 API 网络/5xx 失败重试次数"
+      },
+      {
+        "name": "retryDelayMs",
+        "type": "int",
+        "default": 1000,
+        "required": false,
+        "help": "页面 API 重试基础间隔毫秒；会按尝试次数线性递增"
+      }
+    ],
+    "columns": [
+      "commentId",
+      "countrySiteCn",
+      "supplierId",
+      "goodsTitle",
+      "goodsThumb",
+      "goodsAttribute",
+      "goodsUrl",
+      "goodSn",
+      "spu",
+      "skc",
+      "sku",
+      "goodsCommentStar",
+      "goodsCommentStarName",
+      "goodsCommentContent",
+      "goodsCommentImages",
+      "logisticCommentStar",
+      "logisticCommentContent",
+      "commentTime",
+      "orderTime",
+      "billNo",
+      "memberOverallFitLabelList",
+      "badCommentLabelList"
+    ],
+    "defaultFormat": "json",
+    "type": "js",
+    "modulePath": "shein/feedback.js",
+    "sourceFile": "shein/feedback.js",
+    "navigateBefore": false,
+    "defaultWindowMode": "foreground"
+  },
+  {
+    "site": "shein",
     "name": "login",
     "description": "Open SHEIN seller login and wait until the GSP session is ready",
     "access": "write",
@@ -30921,6 +30989,18 @@
         "default": 300,
         "required": false,
         "help": "Maximum seconds to wait for the user to finish login"
+      },
+      {
+        "name": "username",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN login username; defaults to SHEIN_USERNAME or SHEIN_USER env var"
+      },
+      {
+        "name": "password",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN login password; defaults to SHEIN_PASSWORD or SHEIN_PASS env var"
       }
     ],
     "columns": [

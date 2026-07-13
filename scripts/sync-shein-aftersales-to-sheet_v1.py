@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=12"
+DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=9"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
 DEFAULT_MAYBEAI_API_TIMEOUT = 300
 DEFAULT_MAYBEAI_API_ATTEMPTS = 3
@@ -33,43 +33,34 @@ DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5
 DEFAULT_OPENCLI_CMD = "npm exec -- opencli"
 DEFAULT_STORE = "店3"
 
-SHEET_HEADERS = [
-    "store",
-    "site",
-    "requestTime",
-    "aftersalesOrderNo",
-    "returnOrderNo",
-    "orderNo",
-    "orderSubStatusName",
-    "aftersalesResolutionPlanName",
-    "refundMethod",
-    "sellerResolutionPlanName",
-    "sellerInstruction",
-    "etaTime",
-    "goodsThumb",
-    "goodsTitle",
-    "goodsSn",
-    "suffix",
-    "skuSn",
-    "quantity",
-    "afterSalesReason",
-    "buyerInstruction",
-    "returnExpressNos",
-    "return_attachments",
-    "priceAmount",
-    "checkEstimateIncomeMoney",
-    "returnExpense",
-    "performancePrice",
-    "promotionAmount",
-    "refundRatio",
-    "estimateIncomeMoney",
-    "goodsSettlePrice",
-    "goodsServiceCharge",
-    "freezeAmount",
+SHEET_COLUMN_MAPPING = [
+    ("店铺", None),
+    ("站点", "site"),
+    ("退款申请时间", "requestTime"),
+    ("退款产品图片", "goodsThumb"),
+    ("售后单号", "aftersalesOrderNo"),
+    ("订单号", "orderNo"),
+    ("商品SKU", "skuSn"),
+    ("售后处理方案", "aftersalesResolutionPlanName"),
+    ("售后单处理状态", "orderSubStatusName"),
+    ("售后申请类型", "afterSalesReason"),
+    ("退款原因描述", "buyerInstruction"),
+    ("退款附件", "return_attachments"),
+    ("商品结算总金额", "goodsSettlePrice"),
+    ("退货率约服务费", "performancePrice"),
+    ("预计退货总支出", "estimateIncomeMoney"),
+    ("是否已退款", "__is_refunded"),
+    ("退款方式", "refundMethod"),
+    ("退回单号", "returnExpressNos"),
+    ("备注(退款解析)", "sellerInstruction"),
 ]
 
-UNIQUE_KEY_FIELDS = ["store", "site", "requestTime", "aftersalesOrderNo", "orderNo", "skuSn"]
-REQUEST_TIME_FIELD = "requestTime"
+SHEET_HEADERS = [header for header, _source in SHEET_COLUMN_MAPPING]
+SOURCE_BY_SHEET_HEADER = {header: source for header, source in SHEET_COLUMN_MAPPING}
+LEGACY_HEADER_BY_SOURCE = {source: source for _header, source in SHEET_COLUMN_MAPPING if source}
+LEGACY_HEADER_BY_SOURCE["店铺"] = "店铺"
+UNIQUE_KEY_FIELDS = ["店铺", "站点", "退款申请时间", "售后单号", "订单号", "商品SKU"]
+REQUEST_TIME_FIELD = "退款申请时间"
 
 
 def excel_column_name(index: int) -> str:
@@ -362,8 +353,10 @@ def comma_join(value: Any) -> str:
 
 
 def sheet_value(row: dict[str, Any], store: str, source: str | None) -> Any:
-    if source == "store":
+    if source is None:
         return store
+    if source == "__is_refunded":
+        return "是" if str(row.get("orderSubStatusName", "")).strip() == "同意退款" else "否"
     if source == "goodsThumb":
         return extract_image_url(row.get(source, ""))
     if source == "returnExpressNos":
@@ -375,8 +368,8 @@ def rows_to_records(rows: list[dict[str, Any]], store: str) -> list[dict[str, An
     records = []
     for row in rows:
         record = {}
-        for header in SHEET_HEADERS:
-            record[header] = sheet_value(row, store, header)
+        for header, source in SHEET_COLUMN_MAPPING:
+            record[header] = sheet_value(row, store, source)
         records.append(record)
     return records
 
@@ -389,16 +382,23 @@ def normalize_sheet_record(record: dict[str, Any]) -> dict[str, Any]:
     normalized = {}
     for header in SHEET_HEADERS:
         value = record.get(header, "")
-        if header == "goodsThumb":
-            value = extract_image_url(value)
-        elif header == "returnExpressNos":
-            value = comma_join(value)
+        if value == "":
+            source = SOURCE_BY_SHEET_HEADER.get(header)
+            if source:
+                value = record.get(source, "")
         normalized[header] = normalize_cell(value)
     return normalized
 
 
 def header_aliases(header: str) -> list[str]:
-    return [header]
+    aliases = [header]
+    source = SOURCE_BY_SHEET_HEADER.get(header)
+    if source:
+        aliases.append(source)
+    legacy = LEGACY_HEADER_BY_SOURCE.get(header)
+    if legacy:
+        aliases.append(legacy)
+    return aliases
 
 
 def records_from_sheet_values(values: Any) -> list[dict[str, Any]]:
@@ -439,7 +439,7 @@ def max_request_time(records: list[dict[str, Any]], store: str) -> str:
     values = [
         normalize_request_time(record.get(REQUEST_TIME_FIELD))
         for record in records
-        if str(record.get("store", "")).strip() == store
+        if str(record.get("店铺", "")).strip() == store
     ]
     values = [value for value in values if value]
     return max(values) if values else ""
@@ -607,12 +607,12 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     other_store_records = [
         record
         for record in existing_records
-        if not is_blank_record(record) and str(record.get("store", "")).strip() != args.store
+        if not is_blank_record(record) and str(record.get("店铺", "")).strip() != args.store
     ]
     existing_store_records = [
         record
         for record in existing_records
-        if not is_blank_record(record) and str(record.get("store", "")).strip() == args.store
+        if not is_blank_record(record) and str(record.get("店铺", "")).strip() == args.store
     ]
     current_store_records = rows_to_records(rows, args.store)
     merged_store_records = merge_records_by_unique_key(existing_store_records, current_store_records)
@@ -661,7 +661,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, help="Optional SHEIN aftersales order limit. Omitted by default so OpenCLI controls it.")
     parser.add_argument("--max-pages", dest="max_pages", type=int, help="Optional SHEIN maxPages value for debugging or bounded syncs.")
     parser.add_argument("--since-request-time", help="Only sync SHEIN rows with requestTime greater than this value, e.g. 2026-7-6 or 2026-07-06 19:26:29.")
-    parser.add_argument("--store", default=DEFAULT_STORE, help=f"Value for the store column. Default: {DEFAULT_STORE}")
+    parser.add_argument("--store", default=DEFAULT_STORE, help=f"Value for the 店铺 column. Default: {DEFAULT_STORE}")
     parser.add_argument("--sheet-url", default=DEFAULT_SHEET_URL, help="MaybeAI spreadsheet URL with gid.")
     parser.add_argument("--worksheet-name", help="Optional worksheet name override.")
     parser.add_argument("--read-range", help="Optional existing data range to read before merging. Omitted by default so MaybeAI returns the whole worksheet.")

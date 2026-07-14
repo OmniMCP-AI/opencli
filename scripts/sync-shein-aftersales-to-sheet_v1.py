@@ -8,8 +8,10 @@ duplicating SHEIN browser/session logic here.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import http.client
+import logging
 import os
 import re
 import shlex
@@ -32,6 +34,8 @@ DEFAULT_MAYBEAI_API_ATTEMPTS = 3
 DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5
 DEFAULT_OPENCLI_CMD = "npm exec -- opencli"
 DEFAULT_STORE = "店3"
+DEFAULT_LOG_DIR = "artifacts/shein-aftersales/logs"
+DEFAULT_RAW_OUTPUT_DIR = "artifacts/shein-aftersales/raw"
 
 SHEET_COLUMN_MAPPING = [
     ("店铺", None),
@@ -78,6 +82,62 @@ LAST_COLUMN = excel_column_name(len(SHEET_HEADERS))
 
 class SyncError(RuntimeError):
     pass
+
+
+class StreamToLogger:
+    def __init__(self, logger: logging.Logger, level: int) -> None:
+        self.logger = logger
+        self.level = level
+        self._buffer = ""
+
+    def write(self, data: str) -> int:
+        if not data:
+            return 0
+        self._buffer += data
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line.strip():
+                self.logger.log(self.level, line)
+        return len(data)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            self.logger.log(self.level, self._buffer.rstrip())
+        self._buffer = ""
+
+    def isatty(self) -> bool:
+        return False
+
+
+def resolve_repo_path(path_value: str, repo_root: Path) -> Path:
+    path = Path(path_value).expanduser()
+    return path if path.is_absolute() else repo_root / path
+
+
+def setup_daily_logging(args: argparse.Namespace, repo_root: Path) -> tuple[logging.Logger, list[logging.Handler], Any, Any]:
+    log_dir = resolve_repo_path(args.log_dir, repo_root)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    logger = logging.getLogger("shein_aftersales_sync")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler(original_stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    sys.stdout = StreamToLogger(logger, logging.INFO)
+    sys.stderr = StreamToLogger(logger, logging.ERROR)
+    print(f"Logging SHEIN aftersales sync to {log_path}")
+    print(f"--- run started at {datetime.now().isoformat(timespec='seconds')} ---")
+    return logger, [file_handler, console_handler], original_stdout, original_stderr
 
 
 def load_env_file(path: Path) -> None:
@@ -261,8 +321,10 @@ def safe_filename_part(value: str) -> str:
     return cleaned or "shein"
 
 
-def save_raw_rows(rows: list[dict[str, Any]], store: str, output_dir: Path) -> Path:
-    path = output_dir / f"{safe_filename_part(store)}售后数据.json"
+def save_raw_rows(rows: list[dict[str, Any]], store: str, output_dir: Path, run_started_at: datetime) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = run_started_at.strftime("%Y%m%d-%H%M%S")
+    path = output_dir / f"{safe_filename_part(store)}售后数据-{timestamp}.json"
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
@@ -555,6 +617,15 @@ def build_sheet_target(args: argparse.Namespace, client: MaybeAIClient) -> tuple
     return target, worksheet_name
 
 
+def build_recalculate_target(args: argparse.Namespace) -> dict[str, Any]:
+    sheet_url = args.recalculate_sheet_url or args.sheet_url
+    doc_id, gid = parse_sheet_url(sheet_url)
+    uri = f"https://www.maybe.ai/docs/spreadsheets/d/{doc_id}"
+    if gid is not None:
+        uri = f"{uri}?gid={gid}"
+    return {"uri": uri}
+
+
 def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range: str | None = None) -> list[dict[str, Any]]:
     read_payload = {**target}
     if read_range:
@@ -579,7 +650,12 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
         return
 
     client = build_maybeai_client(args)
-    target, _worksheet_name = build_sheet_target(args, client)
+    target, worksheet_name = build_sheet_target(args, client)
+    print(
+        "Incremental cutoff read sheet: "
+        f"uri={target['uri']}"
+        f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+    )
     existing_records = read_sheet_records(client, target, args.read_range)
     latest = max_request_time(existing_records, args.store)
     if not latest:
@@ -590,9 +666,29 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
     print(f"Using latest {REQUEST_TIME_FIELD} from sheet for store {args.store}: {latest}")
 
 
+def recalculate_formulas(client: MaybeAIClient, target: dict[str, Any]) -> dict[str, Any]:
+    payload = {"uri": target["uri"]}
+    print(f"Recalculating MaybeAI formulas with recalculate_formulas: uri={payload['uri']}")
+    try:
+        result = client.post("/api/v1/excel/recalculate_formulas", payload)
+    except SyncError as error:
+        print(f"warning: MaybeAI recalculate_formulas trigger failed; continuing because sheet data was already written: {error}", file=sys.stderr)
+        return {"uri": payload["uri"], "triggered": False, "success": False, "error": str(error)}
+
+    if result.get("success") is False:
+        message = result.get("message") or result.get("error") or "success=false"
+        print(f"warning: MaybeAI recalculate_formulas returned a non-success result; continuing because sheet data was already written: {message}", file=sys.stderr)
+    return {"uri": payload["uri"], "triggered": True, "success": result.get("success", True), "message": result.get("message"), "error": result.get("error")}
+
+
 def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     client = build_maybeai_client(args)
     target, worksheet_name = build_sheet_target(args, client)
+    print(
+        "MaybeAI sheet read/write target: "
+        f"uri={target['uri']}"
+        f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+    )
 
     existing_records = read_sheet_records(client, target, args.read_range)
 
@@ -637,6 +733,11 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     if write_result.get("success") is False:
         raise SyncError(f"MaybeAI update_data_keep_headers did not succeed:\n{json.dumps(write_result, ensure_ascii=False)}")
 
+    recalculate_result = None
+    if args.recalculate_formulas:
+        recalculate_target = build_recalculate_target(args)
+        recalculate_result = recalculate_formulas(client, recalculate_target)
+
     print(
         "Done:",
         json.dumps(
@@ -650,6 +751,11 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
                 "preserved_other_store_rows": len(other_store_records),
                 "unique_key": UNIQUE_KEY_FIELDS,
                 "write_api": "update_data_keep_headers",
+                "recalculate_formulas": bool(args.recalculate_formulas),
+                "recalculate_api": "recalculate_formulas" if args.recalculate_formulas else None,
+                "recalculate_uri": None if recalculate_result is None else recalculate_result.get("uri"),
+                "recalculate_triggered": None if recalculate_result is None else recalculate_result.get("triggered"),
+                "recalculate_success": None if recalculate_result is None else recalculate_result.get("success"),
             },
             ensure_ascii=False,
         ),
@@ -665,10 +771,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sheet-url", default=DEFAULT_SHEET_URL, help="MaybeAI spreadsheet URL with gid.")
     parser.add_argument("--worksheet-name", help="Optional worksheet name override.")
     parser.add_argument("--read-range", help="Optional existing data range to read before merging. Omitted by default so MaybeAI returns the whole worksheet.")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR, help=f"Directory for daily log files. Relative paths are resolved from the repo root. Default: {DEFAULT_LOG_DIR}")
+    parser.add_argument("--raw-output-dir", default=DEFAULT_RAW_OUTPUT_DIR, help=f"Directory for per-run raw SHEIN JSON files. Relative paths are resolved from the repo root. Default: {DEFAULT_RAW_OUTPUT_DIR}")
     parser.add_argument("--maybeai-base-url", default=DEFAULT_MAYBEAI_BASE_URL, help="MaybeAI API base URL.")
     parser.add_argument("--maybeai-api-attempts", type=int, default=DEFAULT_MAYBEAI_API_ATTEMPTS, help=f"MaybeAI API retry attempts. Default: {DEFAULT_MAYBEAI_API_ATTEMPTS}")
     parser.add_argument("--maybeai-api-retry-delay-seconds", type=int, default=DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS, help=f"Delay between MaybeAI API retries. Default: {DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS}")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
+    parser.add_argument("--recalculate-formulas", action=argparse.BooleanOptionalAction, default=True, help="Trigger MaybeAI recalculate_formulas after a successful sheet write. Failures are logged as warnings and do not fail the sync. Default: true")
+    parser.add_argument("--recalculate-sheet-url", help="Optional MaybeAI spreadsheet URL to recalculate after writing. Defaults to --sheet-url.")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")
     parser.add_argument("--profile", help="Optional OpenCLI Browser Bridge profile alias/id, e.g. profile1.")
     parser.add_argument("--env-file", action="append", default=[], help="Optional .env file to load before reading tokens.")
@@ -693,7 +803,9 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
+    run_started_at = datetime.now()
     repo_root = Path(__file__).resolve().parents[1]
+    logger, log_handlers, original_stdout, original_stderr = setup_daily_logging(args, repo_root)
     for env_file in args.env_file:
         load_env_file(Path(env_file).expanduser())
 
@@ -701,7 +813,8 @@ def main() -> int:
         infer_since_request_time(args)
         rows = fetch_shein_rows(args, repo_root)
         print(f"Fetched {len(rows)} SHEIN aftersales rows.")
-        raw_path = save_raw_rows(rows, args.store, Path.cwd())
+        raw_output_dir = resolve_repo_path(args.raw_output_dir, repo_root)
+        raw_path = save_raw_rows(rows, args.store, raw_output_dir, run_started_at)
         print(f"Saved raw SHEIN JSON to {raw_path}")
         if not rows:
             print("No fresh SHEIN aftersales rows; skipping MaybeAI sheet merge/write.")
@@ -717,6 +830,15 @@ def main() -> int:
     except SyncError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    finally:
+        print(f"--- run finished at {datetime.now().isoformat(timespec='seconds')} ---")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        for handler in log_handlers:
+            logger.removeHandler(handler)
+            handler.close()
 
 
 if __name__ == "__main__":

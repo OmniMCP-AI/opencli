@@ -623,7 +623,10 @@ def build_recalculate_target(args: argparse.Namespace) -> dict[str, Any]:
     uri = f"https://www.maybe.ai/docs/spreadsheets/d/{doc_id}"
     if gid is not None:
         uri = f"{uri}?gid={gid}"
-    return {"uri": uri}
+    target = {"uri": uri}
+    if args.recalculate_worksheet_name:
+        target["worksheet_name"] = args.recalculate_worksheet_name
+    return target
 
 
 def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range: str | None = None) -> list[dict[str, Any]]:
@@ -667,18 +670,22 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
 
 
 def recalculate_formulas(client: MaybeAIClient, target: dict[str, Any]) -> dict[str, Any]:
-    payload = {"uri": target["uri"]}
-    print(f"Recalculating MaybeAI formulas with recalculate_formulas: uri={payload['uri']}")
+    payload = {**target}
+    print(
+        "Recalculating MaybeAI formulas with recalculate_formulas: "
+        f"uri={payload['uri']}"
+        f"{f', worksheet={payload.get('worksheet_name')}' if payload.get('worksheet_name') else ''}"
+    )
     try:
         result = client.post("/api/v1/excel/recalculate_formulas", payload)
     except SyncError as error:
         print(f"warning: MaybeAI recalculate_formulas trigger failed; continuing because sheet data was already written: {error}", file=sys.stderr)
-        return {"uri": payload["uri"], "triggered": False, "success": False, "error": str(error)}
+        return {"uri": payload["uri"], "worksheet_name": payload.get("worksheet_name"), "triggered": False, "success": False, "error": str(error)}
 
     if result.get("success") is False:
         message = result.get("message") or result.get("error") or "success=false"
         print(f"warning: MaybeAI recalculate_formulas returned a non-success result; continuing because sheet data was already written: {message}", file=sys.stderr)
-    return {"uri": payload["uri"], "triggered": True, "success": result.get("success", True), "message": result.get("message"), "error": result.get("error")}
+    return {"uri": payload["uri"], "worksheet_name": payload.get("worksheet_name"), "triggered": True, "success": result.get("success", True), "message": result.get("message"), "error": result.get("error")}
 
 
 def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
@@ -754,6 +761,7 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
                 "recalculate_formulas": bool(args.recalculate_formulas),
                 "recalculate_api": "recalculate_formulas" if args.recalculate_formulas else None,
                 "recalculate_uri": None if recalculate_result is None else recalculate_result.get("uri"),
+                "recalculate_worksheet_name": None if recalculate_result is None else recalculate_result.get("worksheet_name"),
                 "recalculate_triggered": None if recalculate_result is None else recalculate_result.get("triggered"),
                 "recalculate_success": None if recalculate_result is None else recalculate_result.get("success"),
             },
@@ -779,6 +787,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
     parser.add_argument("--recalculate-formulas", action=argparse.BooleanOptionalAction, default=True, help="Trigger MaybeAI recalculate_formulas after a successful sheet write. Failures are logged as warnings and do not fail the sync. Default: true")
     parser.add_argument("--recalculate-sheet-url", help="Optional MaybeAI spreadsheet URL to recalculate after writing. Defaults to --sheet-url.")
+    parser.add_argument("--recalculate-worksheet-name", help="Optional worksheet_name to include in the recalculate_formulas payload. Omitted by default.")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")
     parser.add_argument("--profile", help="Optional OpenCLI Browser Bridge profile alias/id, e.g. profile1.")
     parser.add_argument("--env-file", action="append", default=[], help="Optional .env file to load before reading tokens.")

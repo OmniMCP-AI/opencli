@@ -179,6 +179,7 @@ Important options:
 | `--preflight-login` / `--no-preflight-login` | Enable or disable the `whoami` preflight. Enabled by default. |
 | `--recalculate-formulas` / `--no-recalculate-formulas` | Trigger MaybeAI `recalculate_formulas` after a successful sheet write. Enabled by default; failures are logged as warnings and do not fail the sync. |
 | `--recalculate-sheet-url <url>` | Optional MaybeAI spreadsheet URL to recalculate after writing. Defaults to `--sheet-url`; use this when data is written to one `gid` but formulas live on another `gid`. |
+| `--recalculate-worksheet-name <name>` | Optional `worksheet_name` included in the `recalculate_formulas` payload. Omitted by default. |
 
 Raw JSON is saved as:
 

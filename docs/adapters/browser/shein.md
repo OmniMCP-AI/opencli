@@ -148,7 +148,8 @@ Both scripts:
 - Merge rows by the script-specific unique key.
 - Sort merged rows descending by the business time column before writing.
 - Write data rows with `update_data_keep_headers`, preserving the existing header row.
-- Save the raw CLI JSON in the current working directory.
+- Append structured Python `logging` output to one daily log file by default.
+- Save the raw CLI JSON as one timestamped file per run by default.
 
 ### Sync Aftersales To Sheet
 
@@ -171,15 +172,27 @@ Important options:
 | `--profile <id-or-alias>` | Browser Bridge profile id or alias. |
 | `--sheet-url <url>` | Target MaybeAI spreadsheet URL with `gid`. |
 | `--store <name>` | Value written to the `店铺` column. Defaults to `店3`. |
+| `--log-dir <dir>` | Directory for daily log files. Defaults to `artifacts/shein-aftersales/logs`. |
+| `--raw-output-dir <dir>` | Directory for per-run raw SHEIN JSON files. Defaults to `artifacts/shein-aftersales/raw`. |
 | `--request-timeout <seconds>` | Passed to `opencli shein aftersales --requestTimeout`. |
 | `--attempts <n>` | Whole SHEIN CLI retry attempts. Defaults to `3`. |
 | `--preflight-login` / `--no-preflight-login` | Enable or disable the `whoami` preflight. Enabled by default. |
+| `--recalculate-formulas` / `--no-recalculate-formulas` | Trigger MaybeAI `recalculate_formulas` after a successful sheet write. Enabled by default; failures are logged as warnings and do not fail the sync. |
+| `--recalculate-sheet-url <url>` | Optional MaybeAI spreadsheet URL to recalculate after writing. Defaults to `--sheet-url`; use this when data is written to one `gid` but formulas live on another `gid`. |
 
 Raw JSON is saved as:
 
 ```text
-<店铺>售后数据.json
+artifacts/shein-aftersales/raw/<店铺>售后数据-YYYYMMDD-HHMMSS.json
 ```
+
+Daily logs are appended to:
+
+```text
+artifacts/shein-aftersales/logs/YYYY-MM-DD.log
+```
+
+Each log line includes a timestamp, level, and message.
 
 Sheet headers:
 

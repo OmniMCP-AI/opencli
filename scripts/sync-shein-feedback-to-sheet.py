@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import http.client
+import logging
 import os
 import re
 import shlex
@@ -29,6 +31,8 @@ DEFAULT_MAYBEAI_API_ATTEMPTS = 3
 DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5
 DEFAULT_OPENCLI_CMD = "npm exec -- opencli"
 DEFAULT_STORE = "店3"
+DEFAULT_LOG_DIR = "artifacts/shein-feedback/logs"
+DEFAULT_RAW_OUTPUT_DIR = "artifacts/shein-feedback/raw"
 
 SHEET_COLUMN_MAPPING = [
     ("店铺", None),
@@ -60,6 +64,62 @@ COMMENT_TIME_FIELD = "评价时间"
 
 class SyncError(RuntimeError):
     pass
+
+
+class StreamToLogger:
+    def __init__(self, logger: logging.Logger, level: int) -> None:
+        self.logger = logger
+        self.level = level
+        self._buffer = ""
+
+    def write(self, data: str) -> int:
+        if not data:
+            return 0
+        self._buffer += data
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line.strip():
+                self.logger.log(self.level, line)
+        return len(data)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            self.logger.log(self.level, self._buffer.rstrip())
+        self._buffer = ""
+
+    def isatty(self) -> bool:
+        return False
+
+
+def resolve_repo_path(path_value: str, repo_root: Path) -> Path:
+    path = Path(path_value).expanduser()
+    return path if path.is_absolute() else repo_root / path
+
+
+def setup_daily_logging(args: argparse.Namespace, repo_root: Path) -> tuple[logging.Logger, list[logging.Handler], Any, Any]:
+    log_dir = resolve_repo_path(args.log_dir, repo_root)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    logger = logging.getLogger("shein_feedback_sync")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler(original_stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    sys.stdout = StreamToLogger(logger, logging.INFO)
+    sys.stderr = StreamToLogger(logger, logging.ERROR)
+    print(f"Logging SHEIN feedback sync to {log_path}")
+    print(f"--- run started at {datetime.now().isoformat(timespec='seconds')} ---")
+    return logger, [file_handler, console_handler], original_stdout, original_stderr
 
 
 def excel_column_name(index: int) -> str:
@@ -262,8 +322,8 @@ def normalize_comment_time(value: Any, *, end_of_day: bool = False) -> str:
 
 
 def default_start_time() -> str:
-    yesterday = datetime.now() - timedelta(days=1)
-    return yesterday.strftime("%Y-%m-%d 00:00:00")
+    day_before_yesterday = datetime.now() - timedelta(days=2)
+    return day_before_yesterday.strftime("%Y-%m-%d 00:00:00")
 
 
 def default_end_time() -> str:
@@ -275,10 +335,24 @@ def safe_filename_part(value: str) -> str:
     return cleaned or "shein"
 
 
-def save_raw_rows(rows: list[dict[str, Any]], store: str, output_dir: Path) -> Path:
-    path = output_dir / f"{safe_filename_part(store)}商品评价数据.json"
+def save_raw_rows(rows: list[dict[str, Any]], store: str, output_dir: Path, run_started_at: datetime) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = run_started_at.strftime("%Y%m%d-%H%M%S")
+    path = output_dir / f"{safe_filename_part(store)}商品评价数据-{timestamp}.json"
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def feedback_rows_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    comment_times = [str(row.get("commentTime") or "").strip() for row in rows if str(row.get("commentTime") or "").strip()]
+    by_date = Counter(time_value[:10] for time_value in comment_times)
+    return {
+        "rows": len(rows),
+        "min_commentTime": min(comment_times) if comment_times else "",
+        "max_commentTime": max(comment_times) if comment_times else "",
+        "by_date": dict(sorted(by_date.items())),
+        "sample_commentIds": [str(row.get("commentId") or "") for row in rows[:3]],
+    }
 
 
 def fetch_shein_rows(args: argparse.Namespace, repo_root: Path) -> list[dict[str, Any]]:
@@ -538,6 +612,11 @@ def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range
 def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     client = build_maybeai_client(args)
     target, worksheet_name = build_sheet_target(args, client)
+    print(
+        "MaybeAI feedback sheet read/write target: "
+        f"uri={target['uri']}"
+        f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+    )
     existing_records = read_sheet_records(client, target, args.read_range)
 
     if args.ensure_headers:
@@ -588,7 +667,7 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sync SHEIN product feedback into a MaybeAI sheet.")
-    parser.add_argument("--start-time", default=default_start_time(), help="Start comment time, exclusive. Default: yesterday 00:00:00")
+    parser.add_argument("--start-time", default=default_start_time(), help="Start comment time, exclusive. Default: day before yesterday 00:00:00")
     parser.add_argument("--end-time", default=default_end_time(), help="End comment time, inclusive. Default: today 23:59:59")
     parser.add_argument("--limit", type=int, help="Optional SHEIN feedback limit.")
     parser.add_argument("--per-page", dest="per_page", type=int, help="Optional SHEIN feedback perPage.")
@@ -597,6 +676,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sheet-url", default=DEFAULT_SHEET_URL, help="MaybeAI spreadsheet URL with gid.")
     parser.add_argument("--worksheet-name", help="Optional worksheet name override.")
     parser.add_argument("--read-range", help="Optional existing data range to read before merging. Omitted by default so MaybeAI returns the whole worksheet.")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR, help=f"Directory for daily log files. Relative paths are resolved from the repo root. Default: {DEFAULT_LOG_DIR}")
+    parser.add_argument("--raw-output-dir", default=DEFAULT_RAW_OUTPUT_DIR, help=f"Directory for per-run raw SHEIN JSON files. Relative paths are resolved from the repo root. Default: {DEFAULT_RAW_OUTPUT_DIR}")
     parser.add_argument("--maybeai-base-url", default=DEFAULT_MAYBEAI_BASE_URL, help="MaybeAI API base URL.")
     parser.add_argument("--maybeai-api-attempts", type=int, default=DEFAULT_MAYBEAI_API_ATTEMPTS, help=f"MaybeAI API retry attempts. Default: {DEFAULT_MAYBEAI_API_ATTEMPTS}")
     parser.add_argument("--maybeai-api-retry-delay-seconds", type=int, default=DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS, help=f"Delay between MaybeAI API retries. Default: {DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS}")
@@ -625,23 +706,30 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
+    run_started_at = datetime.now()
     repo_root = Path(__file__).resolve().parents[1]
+    logger, log_handlers, original_stdout, original_stderr = setup_daily_logging(args, repo_root)
     for env_file in args.env_file:
         load_env_file(Path(env_file).expanduser())
 
     args.start_time = normalize_comment_time(args.start_time)
     args.end_time = normalize_comment_time(args.end_time, end_of_day=True)
+    print(f"SHEIN feedback sync store: {args.store}")
+    print(f"SHEIN feedback time window: sinceCommentTime={args.start_time}, untilCommentTime={args.end_time}")
+    print(f"SHEIN feedback target sheet URL: {args.sheet_url}")
 
     try:
         rows = fetch_shein_rows(args, repo_root)
         print(f"Fetched {len(rows)} SHEIN feedback rows.")
-        raw_path = save_raw_rows(rows, args.store, Path.cwd())
+        print("SHEIN feedback rows summary:", json.dumps(feedback_rows_summary(rows), ensure_ascii=False))
+        raw_output_dir = resolve_repo_path(args.raw_output_dir, repo_root)
+        raw_path = save_raw_rows(rows, args.store, raw_output_dir, run_started_at)
         print(f"Saved raw SHEIN JSON to {raw_path}")
         if not rows:
             print("No fresh SHEIN feedback rows; skipping MaybeAI sheet merge/write.")
             return 0
         if args.dry_run:
-            print(json.dumps(rows[:3], ensure_ascii=False, indent=2))
+            print("Dry run enabled; skipping MaybeAI sheet merge/write.")
             return 0
         write_sheet(args, rows)
         return 0
@@ -651,6 +739,15 @@ def main() -> int:
     except SyncError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    finally:
+        print(f"--- run finished at {datetime.now().isoformat(timespec='seconds')} ---")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        for handler in log_handlers:
+            logger.removeHandler(handler)
+            handler.close()
 
 
 if __name__ == "__main__":

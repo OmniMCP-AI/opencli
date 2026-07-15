@@ -222,7 +222,7 @@ Important options:
 
 | Option | Description |
 |--------|-------------|
-| `--start-time <time>` | Start comment time. Defaults to yesterday `00:00:00`. Passed to `--sinceCommentTime`. |
+| `--start-time <time>` | Start comment time. Defaults to the day before yesterday `00:00:00`. Passed to `--sinceCommentTime`. |
 | `--end-time <time>` | End comment time. Defaults to today `23:59:59`. Passed to `--untilCommentTime`. |
 | `--limit <n>` | Optional bounded test limit. |
 | `--per-page <n>` | Optional feedback page size. |
@@ -230,6 +230,8 @@ Important options:
 | `--profile <id-or-alias>` | Browser Bridge profile id or alias. |
 | `--sheet-url <url>` | Target MaybeAI spreadsheet URL with `gid`. |
 | `--store <name>` | Value written to the `店铺` column. Defaults to `店3`. |
+| `--log-dir <dir>` | Directory for daily log files. Defaults to `artifacts/shein-feedback/logs`. |
+| `--raw-output-dir <dir>` | Directory for per-run raw SHEIN JSON files. Defaults to `artifacts/shein-feedback/raw`. |
 | `--request-timeout <seconds>` | Passed to `opencli shein feedback --requestTimeout`. |
 | `--attempts <n>` | Whole SHEIN CLI retry attempts. Defaults to `3`. |
 | `--preflight-login` / `--no-preflight-login` | Enable or disable the `whoami` preflight. Enabled by default. |
@@ -246,7 +248,13 @@ The CLI filter is `commentTime > sinceCommentTime` and `commentTime <= untilComm
 Raw JSON is saved as:
 
 ```text
-<店铺>商品评价数据.json
+artifacts/shein-feedback/raw/<店铺>商品评价数据-YYYYMMDD-HHMMSS.json
+```
+
+Daily logs are appended to:
+
+```text
+artifacts/shein-feedback/logs/YYYY-MM-DD.log
 ```
 
 Sheet headers:

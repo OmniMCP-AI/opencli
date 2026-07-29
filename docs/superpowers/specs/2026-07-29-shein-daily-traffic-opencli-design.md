@@ -2,7 +2,7 @@
 
 ## Goal
 
-把 play-be `POST /api/v1/excel/shein_daily_traffic_analysis_data` 里依赖的外部 Browser Scraper task 迁移到 opencli 的 `shein` adapter 中，并新增一个和现有 SHEIN 售后/评价同步脚本风格一致的业务脚本，把日流量分析数据写入 MaybeAI Sheet。
+把 play-be `POST /api/v1/excel/shein_daily_traffic_analysis_data` 里依赖的外部 Browser Scraper task 迁移到 opencli 的 `shein` adapter 中，并新增一个和现有 SHEIN 售后/评价同步脚本风格一致的业务脚本，把日流量分析数据写入 MaybeAI Sheet。本轮不修改 play-be；opencli 命令和业务脚本本身要能独立完成抓取、ETL、写表。
 
 ## Context
 
@@ -21,6 +21,8 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 - 默认店铺名：`普通店铺`
 - 日期规则：未传日期时默认昨天；只传 `start_date` 或 `end_date` 时另一个取同一天；`start_date > end_date` 时交换顺序；内部按天展开，逐日调用爬虫。
 - 写表规则：默认不清表；先读目标表，已存在某个 `店铺 + 日期` 的行则跳过该天；没有数据时抓取并追加；写完后读表校验目标日期可见。
+- 店铺/profile 规则：一个店铺绑定一个 Chrome Browser Bridge profile。脚本一次只处理一个 `--store` + `--profile` 组合，多店铺调度由外层 cron/编排脚本逐店调用。
+- 数据边界：需要保留到 DB 或归档系统的是 SHEIN 原始数据；中文表头、指标计算、状态文案、合并写表这些 ETL 只在业务脚本里完成。
 
 另外，旧项目 `/Users/duke/projects/opencli 2/src/clis/custom/listSKCsFromSHEIN.ts` 给出了隐藏 task 的可疑核心 endpoint：
 
@@ -38,7 +40,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 1. 新增 `opencli shein daily-traffic` browser adapter，只负责从 SHEIN 页面抓取日流量分析行并输出 JSON。
 2. 新增 `scripts/sync-shein-daily-traffic-to-sheet.py`，只负责登录预检、调用 OpenCLI、保存 raw JSON、读写 MaybeAI Sheet、跳过已存在日期、merge 和日志。
 
-这个拆分和现有 `aftersales`/`feedback` 保持一致：浏览器鉴权、接口捕获、分页抓取留在 JS adapter；业务表头、店铺名、增量策略、MaybeAI API 留在 Python 脚本。play-be 后续可以改成 shell out 到这个脚本，或者外部调度直接跑脚本，从而移除对 `extractDailyProductAnalyticsFromShein` SSE task 的依赖。
+这个拆分和现有 `aftersales`/`feedback` 保持一致：浏览器鉴权、接口捕获、分页抓取留在 JS adapter；业务表头、店铺名、增量策略、MaybeAI API 留在 Python 脚本。本轮交付完成后，外部调度可以直接跑脚本；play-be 迁移只作为后续可选工作，不进入本轮实现范围。
 
 ## Alternatives Considered
 
@@ -74,10 +76,15 @@ opencli --profile profile1 shein daily-traffic \
 
 ### CLI Arguments
 
-- `--startDate <date>`: `YYYY-MM-DD` or `YYYYMMDD`; defaults to yesterday.
-- `--endDate <date>`: `YYYY-MM-DD` or `YYYYMMDD`; defaults to `startDate`.
+- `--startDate <date>`: `YYYY-MM-DD` or `YYYYMMDD`.
+- `--endDate <date>`: `YYYY-MM-DD` or `YYYYMMDD`.
+- Date resolution:
+  - neither `--startDate` nor `--endDate`: use yesterday for both.
+  - only `--startDate`: use it for both start and end.
+  - only `--endDate`: use it for both start and end.
+  - start later than end: swap them.
 - `--areaCd <code>`: defaults to captured body value, then `cn`.
-- `--countrySite <value>`: repeatable or comma-separated; defaults to captured body value, then `shein-all`.
+- `--countrySite <value>`: string argument. If provided, split by comma, trim blank values, and send an array. If omitted, keep captured body `countrySite` when it is a non-empty array/string; otherwise send `['shein-all']`.
 - `--pageSize <n>`: defaults to captured body value, then `100`.
 - `--limit <n>`: max returned rows across all requested days.
 - `--maxPages <n>`: page cap per day for bounded tests.
@@ -93,19 +100,19 @@ opencli --profile profile1 shein daily-traffic \
 3. Install a fetch/XHR capture harness matching `/sbn/new_goods/get_skc_diagnose_list`.
 4. Click the visible `搜索` button; if unavailable, reload the same page and wait for the endpoint.
 5. Extract first successful capture:
-   - `requestHeaders`, sanitized with the same allowlist style as `aftersales.js`/`feedback.js`; do not replay `cookie`, `host`, `content-length`, `sec-*`, `origin`, or `referer`.
+   - `requestHeaders`, sanitized by allowlist. Keep only `accept`, `accept-language`, `build-version`, `content-type`, `origin-path`, `origin-url`, and `x-log-visitorid` when present. Do not replay `cookie`, `host`, `content-length`, `sec-*`, `origin`, or `referer`.
    - `requestBodyPreview`, parsed as JSON.
    - `responsePreview`, parsed and validated with `code === 0`.
 6. For each requested date, build daily request body from the captured body:
    - Preserve page filters from the captured body.
    - Override `dt`, `startDate`, and `endDate` to the daily `YYYYMMDD`.
    - Override `areaCd`, `countrySite`, `pageNum`, and `pageSize` from CLI args when provided.
-7. Fetch page 1 through `page.fetchJson`, then paginate until one of:
+7. Fetch page 1 through `page.fetchJson`, then paginate one day at a time until one of:
    - `pageNum > maxPages`
-   - `rows.length >= limit`
+   - global returned row count reaches `limit`
    - `info.data` is empty
    - current page has fewer rows than page size
-   - `pageNum >= ceil(info.meta.count / pageSize)`
+   - `pageNum >= ceil(info.meta.count / pageSize)`, where `info.meta.count` is the raw SHEIN total count for that day's request.
 8. Return flattened rows.
 
 ### Adapter Output Columns
@@ -122,12 +129,13 @@ gds_pay_ctr_idx, sale_uv_idx, sale_cnt, sale_gmv, gds_sale_ctr_idx,
 confirm_ctr_idx, total_quality_level, total_comment_cnt, bad_comment_rate,
 return_order_cnt, return_qty, new_cate_1_name, new_cate_2_name,
 new_cate_3_name, new_cate_4_name, brand, list_name, list_type, list_rank,
-prom_tag, prom_names, prom_ids, queried_daily_json, prom_inf_ing_json,
-right_campaign_json, raw_json
+prom_tag, prom_names, prom_ids, prom_inf_ing_json, right_campaign_json, raw_json
 ```
 
 Mapping examples from SHEIN raw payload:
 
+- requested daily date -> `date`, formatted as `YYYY-MM-DD`
+- requested daily date -> `queried_start_date` and `queried_end_date`, formatted as `YYYYMMDD`
 - `goodsUvIdx -> goods_uv_idx`
 - `epsUvIdx -> eps_uv_idx`
 - `bounceUvIdx -> bounce_uv_idx`
@@ -147,7 +155,7 @@ Mapping examples from SHEIN raw payload:
 - `rightCampaign -> right_campaign_json`
 - original item -> `raw_json`
 
-`queried_daily_json` should be an empty string unless a verified SHEIN response field provides per-day nested detail. The business sheet can still be filled correctly because each adapter request is one calendar day.
+The adapter must preserve raw data for downstream storage by including `raw_json` for every row. If a future DB/archive step is added, it should store this raw payload or the raw OpenCLI JSON rows, not the ETL-transformed Chinese sheet rows.
 
 ## Business Script Design
 
@@ -174,13 +182,18 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 
 ### Script Arguments
 
-- `--start-date`: default yesterday, accepts `YYYY-MM-DD` or `YYYYMMDD`.
-- `--end-date`: default `start-date`, accepts `YYYY-MM-DD` or `YYYYMMDD`.
+- `--start-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
+- `--end-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
+- Date resolution:
+  - neither `--start-date` nor `--end-date`: use yesterday for both.
+  - only `--start-date`: use it for both start and end.
+  - only `--end-date`: use it for both start and end.
+  - start later than end: swap them.
 - `--store`: value written to `店铺`, default `店3`.
 - `--sheet-url`: target MaybeAI spreadsheet URL with `gid`.
 - `--worksheet-name`: optional worksheet override.
 - `--read-range`: optional existing sheet range.
-- `--profile`: OpenCLI Browser Bridge profile.
+- `--profile`: OpenCLI Browser Bridge profile. One store should use one dedicated Chrome/OpenCLI profile; the script must not switch store inside a profile during a run.
 - `--opencli-cmd`: default `npm exec -- opencli`.
 - `--area-cd`, `--country-site`, `--page-size`, `--limit`, `--max-pages`: forwarded to `opencli shein daily-traffic`.
 - `--request-timeout`, `--api-retry-attempts`, `--api-retry-delay-ms`, `--opencli-timeout`: forwarded to OpenCLI.
@@ -206,7 +219,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 转化率（已确认订单）,转化率 (将确定),商品质量等级,商品评价数,差评率,
 退货订单数,退货件数,一级分类,二级分类,三级分类,四级分类,品牌,
 层级名称,榜单名称,榜单类型,榜单排名,活动标签,活动名称,活动ID,
-每日流量明细JSON,活动信息JSON,权益活动JSON,请求URL,抓取总数,页码,
+活动信息JSON,权益活动JSON,请求URL,抓取总数,页码,
 原始JSON,store_name,queried_start_date,queried_end_date
 ```
 
@@ -247,13 +260,18 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `转化率 (将确定)`: `confirm_ctr_idx`
 - Category, brand, layer, rank, campaign fields map one-to-one from adapter columns.
 - JSON fields are serialized with `ensure_ascii=False`.
+- `活动信息JSON`: `prom_inf_ing_json`
+- `权益活动JSON`: `right_campaign_json`
+- `原始JSON`: `raw_json`
 - `store_name`: `--store`
 - hidden/raw date columns: adapter `queried_start_date`, `queried_end_date`
+
+`每日流量明细JSON` is intentionally omitted because the inspected legacy sample does not provide a reliable per-day nested detail field, and the user confirmed it does not have to be retained. If a later real capture proves a useful daily-detail field exists, add it as a follow-up with a source-field test.
 
 ### Merge And Write Rules
 
 - Read the full worksheet by default, or `--read-range` if provided.
-- If `--skip-existing-days` is true, skip OpenCLI fetch for a date when any existing row matches the same `店铺 + 日期`.
+- If `--skip-existing-days` is true, skip OpenCLI fetch for a date when any existing row matches the same `店铺 + 日期`. This is the default and must match play-be's current whole-day skip behavior.
 - Merge fetched rows with existing records by:
 
 ```text
@@ -266,9 +284,16 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - When `--clear-worksheet-data` is true, discard existing data rows before writing fresh rows, but still write via `update_data_keep_headers` so headers remain.
 - After a successful write, read the sheet again and verify each fetched day has at least one `店铺 + 日期` row visible. Treat verification failure as exit code `1`.
 
+## Raw Data And ETL Boundary
+
+- The OpenCLI adapter returns source-shaped rows plus `raw_json`; it does not produce Chinese business headers.
+- The Python business script performs ETL from adapter rows into the target sheet schema.
+- Raw JSON files under `artifacts/shein-daily-traffic/raw` are the local source of truth for audit/replay.
+- If this flow later writes to MongoDB or another DB, the DB record should store raw adapter rows or each row's `raw_json`; it should not store only the ETL-transformed sheet rows.
+
 ## play-be Migration Contract
 
-After this lands, play-be can stop calling:
+This spec does not require any play-be code change. After this lands, a later play-be task can stop calling:
 
 ```text
 extractDailyProductAnalyticsFromShein
@@ -279,7 +304,7 @@ and instead use one of these integration modes:
 1. Preferred for current architecture: shell out to `python3 scripts/sync-shein-daily-traffic-to-sheet.py` with the request body translated to script args.
 2. Lighter future option: shell out to `opencli shein daily-traffic -f json` and keep the play-be write-to-sheet logic.
 
-The first mode removes the Browser Scraper MCP dependency and also moves the existing daily skip/write verification behavior into a reusable script.
+The first mode removes the Browser Scraper MCP dependency and also moves the existing daily skip/write verification behavior into a reusable script. That migration should be tracked as a separate play-be story.
 
 ## Documentation Updates
 
@@ -298,7 +323,9 @@ Update `docs/adapters/browser/shein.md` with:
 `clis/shein/daily-traffic.test.js` should cover:
 
 - Date normalization: `2026-7-8`, `20260708`, missing end date, reversed date range.
+- `date`, `queried_start_date`, and `queried_end_date` are derived from the requested daily date, not from wall-clock time.
 - Request body construction preserves captured filters and overrides daily `dt/startDate/endDate/pageNum/pageSize`.
+- `countrySite` parsing converts `shein-jp,shein-us` to `['shein-jp', 'shein-us']` and preserves captured arrays when omitted.
 - Header sanitization drops `cookie`, `host`, `content-length`, `origin`, `referer`, and `sec-*`.
 - Payload validation rejects non-zero `code`.
 - Row flattening maps raw SHEIN camelCase fields to snake_case output.
@@ -313,7 +340,7 @@ npm run test:adapter -- clis/shein/daily-traffic.test.js
 
 ### Script Unit Tests
 
-If the repo does not have Python test infrastructure for scripts, add lightweight tests only if a local pattern exists. Otherwise keep script functions pure enough to test manually with `--dry-run`.
+The script should keep pure helpers for date parsing, sheet mapping, unique-key generation, skip-existing-day detection, merge, and sort. If no Python test runner exists in this repo, add a `--self-test` mode or small stdlib `unittest` block that can run without network access.
 
 Manual verification commands:
 
@@ -349,7 +376,9 @@ npm run build-manifest
 
 - `opencli shein daily-traffic --startDate <day> --endDate <day> -f json` returns non-empty rows for a logged-in SHEIN profile with valid data.
 - The adapter does not require committed credentials and does not replay raw cookies manually.
-- Adapter output includes `raw_json` and all columns needed to reproduce play-be's current `SHEIN_DAILY_TRAFFIC_ANALYSIS_FIELDS`.
+- Adapter output includes `raw_json` and all raw/source columns needed for the retained daily-traffic sheet fields.
+- The target sheet omits `每日流量明细JSON`; `活动信息JSON`, `权益活动JSON`, and `原始JSON` remain.
+- Any future DB/archive write stores raw adapter rows or `raw_json`; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, save raw JSON, and skip MaybeAI writes.
 - The sync script can write one store/day to MaybeAI Sheet using `update_data_keep_headers`.
 - Re-running the same store/day with `--skip-existing-days` performs no SHEIN fetch and exits successfully.
@@ -360,12 +389,12 @@ npm run build-manifest
 ## Risks And Mitigations
 
 - SHEIN may have changed the endpoint from `/sbn/new_goods/get_skc_diagnose_list`. Mitigation: the adapter's first implementation must capture the live request from the page, and tests should isolate endpoint matching in one helper.
-- The legacy task may have enriched `queried_daily_json` from another endpoint. Mitigation: keep the column, default it to empty, and add a focused follow-up only if the target sheet or business owner confirms that nested daily JSON is used downstream.
+- The legacy task may have enriched daily detail from another endpoint. Mitigation: omit `每日流量明细JSON` for this implementation and add it later only if a real capture proves a useful source field and downstream need.
 - Existing play-be skipped whole days based on any matching row. Mitigation: keep the same default in the script, while offering `--no-skip-existing-days` for backfills or correction runs.
 - SHEIN sessions are fragile. Mitigation: copy the existing SHEIN script preflight login and retry behavior, and document that parallel commands against the same Browser Bridge profile are unsupported.
 
 ## Self Review
 
 - Placeholder scan: no placeholder sections remain; unknown endpoint enrichment is recorded as a risk with a concrete verification path.
-- Scope check: this spec covers one OpenCLI adapter, one sync script, docs, and tests. It does not require play-be changes in the same implementation branch.
+- Scope check: this spec covers one OpenCLI adapter, one sync script, docs, and tests. It explicitly does not require play-be changes in the same implementation branch.
 - Consistency check: date defaults, daily expansion, target page, target sheet, skip-existing-day behavior, and field names match the inspected play-be/opencli code paths.

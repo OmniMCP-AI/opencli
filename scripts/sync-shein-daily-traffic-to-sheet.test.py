@@ -183,11 +183,13 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                 """{
                   "defaults": {
                     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/etl?gid=0",
-                    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/raw?gid=0"
+                    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/raw?gid=0",
+                    "worksheet_name": "每日流量ETL",
+                    "sheet_display_days": 30
                   },
                   "stores": [
                     {"store": "店1", "profile": "profile1"},
-                    {"store": "店2", "profile": "profile2", "worksheet_name": "店2每日流量ETL"}
+                    {"store": "店2", "profile": "profile2", "sheet_display_days": 7}
                   ]
                 }""",
                 encoding="utf-8",
@@ -201,13 +203,16 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                 "profile": "profile1",
                 "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/etl?gid=0",
                 "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/raw?gid=0",
+                "worksheet_name": "每日流量ETL",
+                "sheet_display_days": 30,
             },
             {
                 "store": "店2",
                 "profile": "profile2",
-                "worksheet_name": "店2每日流量ETL",
                 "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/etl?gid=0",
                 "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/raw?gid=0",
+                "worksheet_name": "每日流量ETL",
+                "sheet_display_days": 7,
             },
         ])
 
@@ -219,6 +224,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "worksheet_name": None,
             "raw_db_uri": "base-raw",
             "raw_db_worksheet_name": None,
+            "sheet_display_days": None,
             "store_config": None,
             "store_key": [],
         })()
@@ -229,6 +235,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "sheet_url": "store-sheet",
             "worksheet_name": "店1每日流量ETL",
             "raw_db_worksheet_name": "店1每日流量",
+            "sheet_display_days": 14,
         })
 
         self.assertEqual(scoped.store, "店1")
@@ -237,6 +244,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(scoped.worksheet_name, "店1每日流量ETL")
         self.assertEqual(scoped.raw_db_uri, "base-raw")
         self.assertEqual(scoped.raw_db_worksheet_name, "店1每日流量")
+        self.assertEqual(scoped.sheet_display_days, 14)
         self.assertEqual(args.store, "店3")
 
     def test_raw_sheet_records_serialize_json_payloads(self) -> None:
@@ -431,6 +439,25 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         days = sync.days_with_etl_records(records, "店1", ["2026-07-27", "2026-07-28", "2026-07-29"])
 
         self.assertEqual(days, ["2026-07-27", "2026-07-28"])
+
+    def test_sheet_display_days_keeps_recent_window_across_stores(self) -> None:
+        records = [
+            {"店铺": "店1", "日期": "2026-07-26", "商品货号": "old"},
+            {"店铺": "店2", "日期": "2026-07-27", "商品货号": "also-old"},
+            {"店铺": "店1", "日期": "2026-07-28", "商品货号": "recent-1"},
+            {"店铺": "店3", "日期": "2026-07-29", "商品货号": "recent-2"},
+        ]
+
+        visible = sync.filter_records_for_sheet_display(
+            records,
+            ["2026-07-27", "2026-07-28", "2026-07-29"],
+            2,
+        )
+
+        self.assertEqual([(row["店铺"], row["日期"], row["商品货号"]) for row in visible], [
+            ("店1", "2026-07-28", "recent-1"),
+            ("店3", "2026-07-29", "recent-2"),
+        ])
 
     def test_preserves_unknown_boolean_flag_values(self) -> None:
         self.assertEqual(sync.map_yes_no("待确认"), "待确认")

@@ -237,6 +237,8 @@ STORE_CONFIG_ALIASES = {
     "sheet-url": "sheet_url",
     "worksheetName": "worksheet_name",
     "worksheet-name": "worksheet_name",
+    "sheetDisplayDays": "sheet_display_days",
+    "sheet-display-days": "sheet_display_days",
     "rawDbUri": "raw_db_uri",
     "raw-db-uri": "raw_db_uri",
     "rawDbWorksheetName": "raw_db_worksheet_name",
@@ -248,6 +250,7 @@ STORE_CONFIG_ALLOWED_KEYS = {
     "profile",
     "sheet_url",
     "worksheet_name",
+    "sheet_display_days",
     "raw_db_uri",
     "raw_db_worksheet_name",
 }
@@ -971,6 +974,37 @@ def sort_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sort_records_for_write(records)
 
 
+def positive_int_or_none(value: Any, name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise SyncError(f"{name} must be a positive integer.") from error
+    if parsed <= 0:
+        raise SyncError(f"{name} must be a positive integer.")
+    return parsed
+
+
+def filter_records_for_sheet_display(records: list[dict[str, Any]], requested_days: list[str], sheet_display_days: Any) -> list[dict[str, Any]]:
+    display_days = positive_int_or_none(sheet_display_days, "--sheet-display-days")
+    if display_days is None:
+        return list(records)
+    end = normalize_date_input(requested_days[-1])
+    start_dt = datetime.strptime(end, "%Y-%m-%d") - timedelta(days=display_days - 1)
+    start = start_dt.strftime("%Y-%m-%d")
+
+    visible: list[dict[str, Any]] = []
+    for record in records:
+        try:
+            day = normalize_date_input(record.get("日期"))
+        except SyncError:
+            continue
+        if start <= day <= end:
+            visible.append(record)
+    return visible
+
+
 def traffic_rows_summary(rows: list[dict[str, Any]], records: list[dict[str, Any]], requested_days: list[str], missing_days: list[str], skipped_days: list[str]) -> dict[str, Any]:
     by_date = Counter(str(row.get("date") or row.get("日期") or "").strip() for row in rows if str(row.get("date") or row.get("日期") or "").strip())
     return {
@@ -1122,9 +1156,12 @@ def save_raw_daily_rows(args: argparse.Namespace, client: "MaybeAIClient", day: 
     document = build_raw_daily_document(rows, args, day)
     uri, worksheet_name = write_raw_worksheet_for_day(args, client, day, rows)
     payload = build_save_table_worksheet_to_mongodb_payload(args, data_date=day, uri=uri, store=args.store)
+    doc_id, _ = parse_sheet_url(uri)
+    snapshot_key = f"{doc_id}:{worksheet_name}:{normalize_date_input(day)}"
     print(
         "Saving raw SHEIN daily traffic worksheet to MongoDB: "
-        f"day={day}, rows={len(rows)}, key={document['raw_key']}, worksheet={worksheet_name}"
+        f"day={day}, rows={len(rows)}, raw_key={document['raw_key']}, "
+        f"snapshot_key={snapshot_key}, worksheet={worksheet_name}"
     )
     result = client.post(args.raw_db_save_path, payload)
     if result.get("success") is False or result.get("error"):
@@ -1412,8 +1449,12 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     ensure_headers(args, client, target)
     merged_records = records if args.clear_worksheet_data else merge_records_by_unique_key(existing_records, records)
     merged_records = sort_records(merged_records)
-    write_sheet_records(client, target, merged_records, args)
-    verify_written_days(client, target, args, days_with_etl_records(records, args.store, missing_days))
+    display_records = filter_records_for_sheet_display(merged_records, requested_days, args.sheet_display_days)
+    if args.sheet_display_days:
+        print(f"Sheet display window: last {args.sheet_display_days} day(s), rows={len(display_records)}")
+    write_sheet_records(client, target, display_records, args)
+    display_fresh_records = filter_records_for_sheet_display(records, requested_days, args.sheet_display_days)
+    verify_written_days(client, target, args, days_with_etl_records(display_fresh_records, args.store, missing_days))
 
 
 def run_self_test() -> int:
@@ -1457,6 +1498,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Days to request from the raw API ending at --end-date. Default: {DEFAULT_RAW_READ_DAYS}")
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh", help="Use freshly crawled CLI rows or rows loaded back from the raw API for Sheet ETL. Default: fresh")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
+    parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at --end-date. Raw DB saves still use the requested date range.")
     parser.add_argument("--clear-worksheet-data", action="store_true", help="Discard existing data rows before writing fetched rows. Headers are preserved.")
     parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when any existing row matches 店铺 + 日期. Default: true")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")

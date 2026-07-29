@@ -44,7 +44,7 @@ Reference:
 - `clis/shein/feedback.js`
 - `scripts/sync-shein-aftersales-to-sheet_v1.py`
 - `scripts/sync-shein-feedback-to-sheet.py`
-- `docs/superpowers/specs/2026-07-29-shein-daily-traffic-opencli-design.md`
+- `docs/specs/2026-07-29-shein-daily-traffic-opencli-design.md`
 
 ## Adapter Contract
 

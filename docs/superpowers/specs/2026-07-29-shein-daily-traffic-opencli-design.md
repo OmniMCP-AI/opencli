@@ -100,7 +100,7 @@ opencli --profile profile1 shein daily-traffic \
 3. Install a fetch/XHR capture harness matching `/sbn/new_goods/get_skc_diagnose_list`.
 4. Click the visible `搜索` button; if unavailable, reload the same page and wait for the endpoint.
 5. Extract first successful capture:
-   - `requestHeaders`, sanitized by allowlist. Keep only `accept`, `accept-language`, `build-version`, `content-type`, `origin-path`, `origin-url`, and `x-log-visitorid` when present. Do not replay `cookie`, `host`, `content-length`, `sec-*`, `origin`, or `referer`.
+   - `requestHeaders`, sanitized by blocklist. Preserve captured SHEIN business/risk-control headers, but do not replay `cookie`, `host`, `content-length`, `accept-encoding`, `connection`, `sec-*`, `origin`, or `referer`.
    - `requestBodyPreview`, parsed as JSON.
    - `responsePreview`, parsed and validated with `code === 0`.
 6. For each requested date, build daily request body from the captured body:
@@ -126,7 +126,7 @@ onsale_flag, sale_flag, multicolor_flag, goods_uv_idx, eps_uv_idx,
 bounce_uv_idx, bounce_rate, search_click_cnt, like_cnt, cart_uv_idx,
 cart_pv_idx, gds_cart_ctr_idx, pay_uv_idx, pay_order_cnt, gmv,
 gds_pay_ctr_idx, sale_uv_idx, sale_cnt, sale_gmv, gds_sale_ctr_idx,
-confirm_ctr_idx, total_quality_level, total_comment_cnt, bad_comment_rate,
+confirm_ctr_idx, total_quality_level, total_comment_cnt, bad_comment_cnt, bad_comment_rate,
 return_order_cnt, return_qty, new_cate_1_name, new_cate_2_name,
 new_cate_3_name, new_cate_4_name, brand, list_name, list_type, list_rank,
 prom_tag, prom_names, prom_ids
@@ -151,7 +151,7 @@ Mapping examples from SHEIN raw payload:
 - `layerNm -> layer_name`
 - `promCampaign.promInfIng[].promNm -> prom_names`, joined by ` | `
 - `promCampaign.promInfIng[].promId -> prom_ids`, joined by ` | `
-- Do not expose JSON blob columns such as `raw_json`, `prom_inf_ing_json`, or `right_campaign_json`; raw SHEIN payloads are already preserved in DB and should be read from DB for future re-ETL.
+- Include raw payload fields `raw_json`, `prom_inf_ing_json`, and `right_campaign_json` in the adapter JSON output so the business script can persist raw crawler data. These fields must not be written to the business Sheet.
 
 ## Business Script Design
 
@@ -197,6 +197,15 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--skip-existing-days` / `--no-skip-existing-days`: default true, matching play-be behavior.
 - `--clear-worksheet-data`: default false; when true, clear data rows while preserving headers before writing fresh rows.
 - `--ensure-headers`: rewrite header row before writing.
+- `--raw-db`: default false. When true, after each successful daily CLI crawl, write the fetched rows into the raw staging worksheet and call `excel__save_table_worksheet_to_mongodb`.
+- `--raw-db-save-path`: default `/api/v1/tool/function_call`.
+- `--raw-db-uri`: spreadsheet URI used by `save_table_worksheet_to_mongodb`; defaults to `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0`.
+- `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
+- `--raw-db-worksheet-suffix`: default `每日流量`, matching the staging worksheet pattern such as `店3每日流量`.
+- `--raw-db-type`: default `shein_daily_traffic`, used by the later raw read API query.
+- `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` and ETLs the returned raw rows instead of directly ETLing the current CLI rows.
+- `--raw-db-read-path`: required when `--etl-source raw-api`.
+- `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
 - `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.
 - `--env-file`: load one or more env files before reading tokens.
 - `--log-dir`: default `artifacts/shein-daily-traffic/logs`.
@@ -204,17 +213,11 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 ### Sheet Headers
 
 ```text
-站点,店铺,日期,查询开始日期,查询结束日期,商品编号,商品,商品图片,
-商品当前状态,规格编号,规格名称,规格当前状态,商品货号,主商品货号,
-供应商SKU,上架状态,是否新品,是否多色,商品访客（访问）,商品页面访客,
-点击率,跳出商品页面的访客数,商品跳出率,搜索点击数,赞,
+站点,店铺,日期,商品编号,商品,商品当前状态,规格编号,规格名称,规格当前状态,商品货号,主商品货号,
+商品访客（访问）,商品页面访客,跳出商品页面的访客数,商品跳出率,搜索点击数,赞,
 商品访客（添加至购物车）,件数 (加入购物车）,转化率 (加入购物车率),
 买家数（已下单）,件数（已下单）,销售额（已下单）,转化率（已下单）,
-买家数（已确认订单）,件数（已确认订单）,销售额（已确认订单）,
-转化率（已确认订单）,转化率 (将确定),商品质量等级,商品评价数,差评率,
-退货订单数,退货件数,一级分类,二级分类,三级分类,四级分类,品牌,
-层级名称,榜单名称,榜单类型,榜单排名,活动标签,活动名称,活动ID,
-请求URL,抓取总数,页码,store_name,queried_start_date,queried_end_date
+买家数（已确认订单）,件数（已确认订单）,一级分类,二级分类,三级分类,四级分类
 ```
 
 ### Sheet Mapping
@@ -222,20 +225,12 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `站点`: constant `SHEIN`
 - `店铺`: `--store`
 - `日期`: adapter `date`, formatted `YYYY-MM-DD`
-- `查询开始日期`: adapter `queried_start_date`, formatted `YYYYMMDD`
-- `查询结束日期`: adapter `queried_end_date`, formatted `YYYYMMDD`
 - `商品`: `goods_name`
-- `商品图片`: `img_url`
 - `商品当前状态`: map `sale_flag` with `1 -> 在售`, `0 -> 下架`; preserve other values as-is.
 - `商品货号`: `skc`
 - `主商品货号`: `spu`
-- `供应商SKU`: `sku_supplier_no`
-- `上架状态`: map `onsale_flag` with `1 -> 在售`, `0 -> 下架`; preserve other values as-is.
-- `是否新品`: map `new_goods_tag` with truthy values to `是`, `0/false/否` to `否`, otherwise preserve.
-- `是否多色`: map `multicolor_flag` with `1/true/是 -> 是`, `0/false/否 -> 否`.
 - `商品访客（访问）`: `goods_uv_idx`
 - `商品页面访客`: `eps_uv_idx`
-- `点击率`: calculate `goods_uv_idx / eps_uv_idx` when both are numeric and denominator is non-zero.
 - `跳出商品页面的访客数`: `bounce_uv_idx`
 - `商品跳出率`: `bounce_rate`
 - `搜索点击数`: `search_click_cnt`
@@ -249,14 +244,10 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `转化率（已下单）`: `gds_pay_ctr_idx`
 - `买家数（已确认订单）`: `sale_uv_idx`
 - `件数（已确认订单）`: `sale_cnt`, default `0` only when source is blank.
-- `销售额（已确认订单）`: `sale_gmv`
-- `转化率（已确认订单）`: `gds_sale_ctr_idx`
-- `转化率 (将确定)`: `confirm_ctr_idx`
-- Category, brand, layer, rank, campaign fields map one-to-one from adapter columns.
-- `store_name`: `--store`
-- hidden/raw date columns: adapter `queried_start_date`, `queried_end_date`
+- Category fields map one-to-one from adapter columns.
+- Raw-only fields such as query dates, image URL, supplier SKU, status flags, click rate, rating counts, return metrics, campaign metadata, `store_name`, and JSON payloads stay in the raw DB worksheet.
 
-All JSON blob columns are intentionally omitted from the target sheet: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data already lives in DB; future re-ETL should read the DB raw records instead of relying on JSON serialized into MaybeAI Sheet cells.
+The final ETL sheet headers must match the legacy SHEIN daily traffic worksheet at `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41`. Raw source data lives in the configured raw DB/API path; future re-ETL should read those raw records instead of relying on JSON serialized into MaybeAI Sheet cells.
 
 ### Merge And Write Rules
 
@@ -276,8 +267,8 @@ All JSON blob columns are intentionally omitted from the target sheet: `每日�
 
 ## Raw Data And ETL Boundary
 
-- The OpenCLI adapter returns source-shaped scalar rows; it does not produce Chinese business headers or JSON blob fields.
-- The Python business script performs ETL from adapter rows into the target sheet schema.
+- The OpenCLI adapter returns source-shaped scalar rows plus raw payload fields for raw DB persistence; it does not produce Chinese business headers.
+- The Python business script can persist one raw worksheet per day to MongoDB before ETL, then either ETL freshly crawled rows or rows loaded back from the raw API.
 - DB raw records are the source of truth for audit/replay and future ETL.
 - MaybeAI Sheet output is only the current business-facing projection, not the raw-data archive.
 
@@ -366,8 +357,10 @@ npm run build-manifest
 
 - `opencli shein daily-traffic --startDate <day> --endDate <day> -f json` returns non-empty rows for a logged-in SHEIN profile with valid data.
 - The adapter does not require committed credentials and does not replay raw cookies manually.
-- Adapter output includes all source scalar columns needed for the retained daily-traffic sheet fields and omits JSON blob fields.
+- Adapter output includes all source scalar columns needed for the retained daily-traffic sheet fields and preserves raw payload fields for DB persistence.
 - The target sheet omits all JSON blob columns: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`.
+- With `--raw-db`, the script writes the fetched day to the raw worksheet and calls `save_table_worksheet_to_mongodb` with `data_date`, `uri`, and `worksheet_name`.
+- With `--etl-source raw-api`, the script calls the configured raw read API for a 30-day window and ETLs the returned raw rows.
 - DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.
 - The sync script can write one store/day to MaybeAI Sheet using `update_data_keep_headers`.
@@ -379,7 +372,7 @@ npm run build-manifest
 ## Risks And Mitigations
 
 - SHEIN may have changed the endpoint from `/sbn/new_goods/get_skc_diagnose_list`. Mitigation: the adapter's first implementation must capture the live request from the page, and tests should isolate endpoint matching in one helper.
-- The legacy task may have enriched nested JSON fields from another endpoint. Mitigation: omit all JSON blob sheet fields for this implementation because raw data is already stored in DB; add scalar business fields later only when there is a concrete downstream need.
+- The worksheet-to-MongoDB save path depends on the existing `excel__save_table_worksheet_to_mongodb` tool. Mitigation: raw DB writes are opt-in; production should keep the staging worksheet isolated per store and read/deduplicate by `data_date` when building ETL windows.
 - Existing play-be skipped whole days based on any matching row. Mitigation: keep the same default in the script, while offering `--no-skip-existing-days` for backfills or correction runs.
 - SHEIN sessions are fragile. Mitigation: copy the existing SHEIN script preflight login and retry behavior, and document that parallel commands against the same Browser Bridge profile are unsupported.
 

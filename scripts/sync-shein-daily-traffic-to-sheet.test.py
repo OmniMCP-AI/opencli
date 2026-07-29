@@ -421,6 +421,17 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(summary["by_date"], {"2026-07-28": 1, "2026-07-29": 1})
 
+    def test_write_verification_days_exclude_empty_fetched_days(self) -> None:
+        records = [
+            {"店铺": "店1", "日期": "2026-07-27", "商品货号": "skc-1"},
+            {"店铺": "店1", "日期": "2026-07-28", "商品货号": "skc-2"},
+            {"店铺": "店2", "日期": "2026-07-29", "商品货号": "other-store"},
+        ]
+
+        days = sync.days_with_etl_records(records, "店1", ["2026-07-27", "2026-07-28", "2026-07-29"])
+
+        self.assertEqual(days, ["2026-07-27", "2026-07-28"])
+
     def test_preserves_unknown_boolean_flag_values(self) -> None:
         self.assertEqual(sync.map_yes_no("待确认"), "待确认")
         self.assertEqual(sync.map_yes_no("混合"), "混合")

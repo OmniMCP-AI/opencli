@@ -30876,6 +30876,150 @@
   },
   {
     "site": "shein",
+    "name": "daily-traffic",
+    "description": "拉取 SHEIN 日流量商品分析数据",
+    "access": "read",
+    "example": "opencli shein daily-traffic --startDate 2026-07-28 --endDate 2026-07-28 -f json",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "startDate",
+        "type": "str",
+        "required": false,
+        "help": "开始日期，支持 YYYY-MM-DD 或 YYYYMMDD；不传则默认昨天"
+      },
+      {
+        "name": "endDate",
+        "type": "str",
+        "required": false,
+        "help": "结束日期，支持 YYYY-MM-DD 或 YYYYMMDD；不传则取 startDate 或默认昨天"
+      },
+      {
+        "name": "areaCd",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN areaCd；不传则沿用页面请求，最后 fallback 为 cn"
+      },
+      {
+        "name": "countrySite",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN countrySite，逗号分隔；不传则沿用页面请求，最后 fallback 为 shein-all"
+      },
+      {
+        "name": "pageSize",
+        "type": "int",
+        "required": false,
+        "help": "列表接口每页数量；不传则沿用页面请求或 100"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "required": false,
+        "help": "最多返回的商品分析行数，跨日期全局限制"
+      },
+      {
+        "name": "maxPages",
+        "type": "int",
+        "required": false,
+        "help": "每天最多拉取页数，调试用"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 3600,
+        "required": false,
+        "help": "整条 SHEIN 日流量命令总超时时间（秒）"
+      },
+      {
+        "name": "requestTimeout",
+        "type": "int",
+        "default": 60,
+        "required": false,
+        "help": "单个 SHEIN 页面 API 捕获/请求超时时间（秒）"
+      },
+      {
+        "name": "retryAttempts",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "页面 API 网络/5xx 失败重试次数"
+      },
+      {
+        "name": "retryDelayMs",
+        "type": "int",
+        "default": 1000,
+        "required": false,
+        "help": "页面 API 重试基础间隔毫秒；会按尝试次数线性递增"
+      }
+    ],
+    "columns": [
+      "date",
+      "queried_start_date",
+      "queried_end_date",
+      "total_count",
+      "page_num",
+      "request_url",
+      "goods_name",
+      "img_url",
+      "spu",
+      "skc",
+      "sku_supplier_no",
+      "new_goods_tag",
+      "layer_name",
+      "onsale_flag",
+      "sale_flag",
+      "multicolor_flag",
+      "goods_uv_idx",
+      "eps_uv_idx",
+      "bounce_uv_idx",
+      "bounce_rate",
+      "search_click_cnt",
+      "like_cnt",
+      "cart_uv_idx",
+      "cart_pv_idx",
+      "gds_cart_ctr_idx",
+      "pay_uv_idx",
+      "pay_order_cnt",
+      "gmv",
+      "gds_pay_ctr_idx",
+      "sale_uv_idx",
+      "sale_cnt",
+      "sale_gmv",
+      "gds_sale_ctr_idx",
+      "confirm_ctr_idx",
+      "total_quality_level",
+      "total_comment_cnt",
+      "bad_comment_cnt",
+      "bad_comment_rate",
+      "return_order_cnt",
+      "return_qty",
+      "new_cate_1_name",
+      "new_cate_2_name",
+      "new_cate_3_name",
+      "new_cate_4_name",
+      "brand",
+      "list_name",
+      "list_type",
+      "list_rank",
+      "prom_tag",
+      "prom_names",
+      "prom_ids",
+      "prom_inf_ing_json",
+      "right_campaign_json",
+      "raw_json"
+    ],
+    "defaultFormat": "json",
+    "type": "js",
+    "modulePath": "shein/daily-traffic.js",
+    "sourceFile": "shein/daily-traffic.js",
+    "navigateBefore": false,
+    "defaultWindowMode": "foreground"
+  },
+  {
+    "site": "shein",
     "name": "feedback",
     "description": "拉取 SHEIN 商品评价列表",
     "access": "read",

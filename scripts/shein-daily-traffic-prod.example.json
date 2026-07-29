@@ -1,0 +1,29 @@
+{
+  "defaults": {
+    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/<etl-doc-id>?gid=<gid>",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0"
+  },
+  "stores": [
+    {
+      "key": "store1",
+      "store": "店1",
+      "profile": "profile1",
+      "worksheet_name": "店1每日流量ETL",
+      "raw_db_worksheet_name": "店1每日流量"
+    },
+    {
+      "key": "store2",
+      "store": "店2",
+      "profile": "profile2",
+      "worksheet_name": "店2每日流量ETL",
+      "raw_db_worksheet_name": "店2每日流量"
+    },
+    {
+      "key": "store3",
+      "store": "店3",
+      "profile": "profile3",
+      "worksheet_name": "店3每日流量ETL",
+      "raw_db_worksheet_name": "店3每日流量"
+    }
+  ]
+}

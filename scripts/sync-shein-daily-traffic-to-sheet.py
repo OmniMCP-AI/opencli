@@ -984,6 +984,19 @@ def traffic_rows_summary(rows: list[dict[str, Any]], records: list[dict[str, Any
     }
 
 
+def days_with_etl_records(records: list[dict[str, Any]], store: str, candidate_days: list[str]) -> list[str]:
+    candidate_set = set(candidate_days)
+    seen: set[str] = set()
+    days: list[str] = []
+    for record in records:
+        record_store, day = day_skip_key(record)
+        if record_store != store or day not in candidate_set or day in seen:
+            continue
+        seen.add(day)
+        days.append(day)
+    return days
+
+
 def raw_profile_key(profile: Any) -> str:
     value = str(profile or "").strip()
     return value or "default"
@@ -1400,7 +1413,7 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     merged_records = records if args.clear_worksheet_data else merge_records_by_unique_key(existing_records, records)
     merged_records = sort_records(merged_records)
     write_sheet_records(client, target, merged_records, args)
-    verify_written_days(client, target, args, missing_days)
+    verify_written_days(client, target, args, days_with_etl_records(records, args.store, missing_days))
 
 
 def run_self_test() -> int:

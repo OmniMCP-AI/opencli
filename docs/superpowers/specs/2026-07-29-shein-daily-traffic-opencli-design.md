@@ -10,7 +10,7 @@
 
 - `clis/shein/aftersales.js`：在真实 SHEIN GSP 页面内捕获首个接口请求，提取可复放 headers/body，再用 `page.fetchJson` 分页和补详情。
 - `clis/shein/feedback.js`：在 SHEIN 页面点击搜索或 reload 捕获列表请求，把时间范围注入请求体后复放分页。
-- `scripts/sync-shein-aftersales-to-sheet_v1.py` 与 `scripts/sync-shein-feedback-to-sheet.py`：负责 `whoami`/`login` 预检、OpenCLI 子进程重试、保存 raw JSON、读表、按业务唯一键 merge、`update_data_keep_headers` 写入。
+- `scripts/sync-shein-aftersales-to-sheet_v1.py` 与 `scripts/sync-shein-feedback-to-sheet.py`：负责 `whoami`/`login` 预检、OpenCLI 子进程重试、读表、按业务唯一键 merge、`update_data_keep_headers` 写入。
 
 play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fastestai-playground/src/fastestai_playground/excel/router/api.py`：
 
@@ -22,7 +22,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 - 日期规则：未传日期时默认昨天；只传 `start_date` 或 `end_date` 时另一个取同一天；`start_date > end_date` 时交换顺序；内部按天展开，逐日调用爬虫。
 - 写表规则：默认不清表；先读目标表，已存在某个 `店铺 + 日期` 的行则跳过该天；没有数据时抓取并追加；写完后读表校验目标日期可见。
 - 店铺/profile 规则：一个店铺绑定一个 Chrome Browser Bridge profile。脚本一次只处理一个 `--store` + `--profile` 组合，多店铺调度由外层 cron/编排脚本逐店调用。
-- 数据边界：需要保留到 DB 或归档系统的是 SHEIN 原始数据；中文表头、指标计算、状态文案、合并写表这些 ETL 只在业务脚本里完成。
+- 数据边界：SHEIN 原始数据已经由 DB 保存；业务脚本只负责从 OpenCLI/原始数据结果做 ETL 并写 MaybeAI Sheet，不再往 Sheet 或本地文件里冗余写 JSON 字段。
 
 另外，旧项目 `/Users/duke/projects/opencli 2/src/clis/custom/listSKCsFromSHEIN.ts` 给出了隐藏 task 的可疑核心 endpoint：
 
@@ -38,7 +38,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 推荐做成两个独立交付单元：
 
 1. 新增 `opencli shein daily-traffic` browser adapter，只负责从 SHEIN 页面抓取日流量分析行并输出 JSON。
-2. 新增 `scripts/sync-shein-daily-traffic-to-sheet.py`，只负责登录预检、调用 OpenCLI、保存 raw JSON、读写 MaybeAI Sheet、跳过已存在日期、merge 和日志。
+2. 新增 `scripts/sync-shein-daily-traffic-to-sheet.py`，只负责登录预检、调用 OpenCLI、ETL、读写 MaybeAI Sheet、跳过已存在日期、merge 和日志。
 
 这个拆分和现有 `aftersales`/`feedback` 保持一致：浏览器鉴权、接口捕获、分页抓取留在 JS adapter；业务表头、店铺名、增量策略、MaybeAI API 留在 Python 脚本。本轮交付完成后，外部调度可以直接跑脚本；play-be 迁移只作为后续可选工作，不进入本轮实现范围。
 
@@ -129,7 +129,7 @@ gds_pay_ctr_idx, sale_uv_idx, sale_cnt, sale_gmv, gds_sale_ctr_idx,
 confirm_ctr_idx, total_quality_level, total_comment_cnt, bad_comment_rate,
 return_order_cnt, return_qty, new_cate_1_name, new_cate_2_name,
 new_cate_3_name, new_cate_4_name, brand, list_name, list_type, list_rank,
-prom_tag, prom_names, prom_ids, prom_inf_ing_json, right_campaign_json, raw_json
+prom_tag, prom_names, prom_ids
 ```
 
 Mapping examples from SHEIN raw payload:
@@ -151,11 +151,7 @@ Mapping examples from SHEIN raw payload:
 - `layerNm -> layer_name`
 - `promCampaign.promInfIng[].promNm -> prom_names`, joined by ` | `
 - `promCampaign.promInfIng[].promId -> prom_ids`, joined by ` | `
-- `promCampaign.promInfIng -> prom_inf_ing_json`
-- `rightCampaign -> right_campaign_json`
-- original item -> `raw_json`
-
-The adapter must preserve raw data for downstream storage by including `raw_json` for every row. If a future DB/archive step is added, it should store this raw payload or the raw OpenCLI JSON rows, not the ETL-transformed Chinese sheet rows.
+- Do not expose JSON blob columns such as `raw_json`, `prom_inf_ing_json`, or `right_campaign_json`; raw SHEIN payloads are already preserved in DB and should be read from DB for future re-ETL.
 
 ## Business Script Design
 
@@ -201,10 +197,9 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--skip-existing-days` / `--no-skip-existing-days`: default true, matching play-be behavior.
 - `--clear-worksheet-data`: default false; when true, clear data rows while preserving headers before writing fresh rows.
 - `--ensure-headers`: rewrite header row before writing.
-- `--dry-run`: fetch and save raw JSON, skip MaybeAI write.
+- `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.
 - `--env-file`: load one or more env files before reading tokens.
 - `--log-dir`: default `artifacts/shein-daily-traffic/logs`.
-- `--raw-output-dir`: default `artifacts/shein-daily-traffic/raw`.
 
 ### Sheet Headers
 
@@ -219,8 +214,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 转化率（已确认订单）,转化率 (将确定),商品质量等级,商品评价数,差评率,
 退货订单数,退货件数,一级分类,二级分类,三级分类,四级分类,品牌,
 层级名称,榜单名称,榜单类型,榜单排名,活动标签,活动名称,活动ID,
-活动信息JSON,权益活动JSON,请求URL,抓取总数,页码,
-原始JSON,store_name,queried_start_date,queried_end_date
+请求URL,抓取总数,页码,store_name,queried_start_date,queried_end_date
 ```
 
 ### Sheet Mapping
@@ -259,14 +253,10 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `转化率（已确认订单）`: `gds_sale_ctr_idx`
 - `转化率 (将确定)`: `confirm_ctr_idx`
 - Category, brand, layer, rank, campaign fields map one-to-one from adapter columns.
-- JSON fields are serialized with `ensure_ascii=False`.
-- `活动信息JSON`: `prom_inf_ing_json`
-- `权益活动JSON`: `right_campaign_json`
-- `原始JSON`: `raw_json`
 - `store_name`: `--store`
 - hidden/raw date columns: adapter `queried_start_date`, `queried_end_date`
 
-`每日流量明细JSON` is intentionally omitted because the inspected legacy sample does not provide a reliable per-day nested detail field, and the user confirmed it does not have to be retained. If a later real capture proves a useful daily-detail field exists, add it as a follow-up with a source-field test.
+All JSON blob columns are intentionally omitted from the target sheet: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data already lives in DB; future re-ETL should read the DB raw records instead of relying on JSON serialized into MaybeAI Sheet cells.
 
 ### Merge And Write Rules
 
@@ -286,10 +276,10 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 
 ## Raw Data And ETL Boundary
 
-- The OpenCLI adapter returns source-shaped rows plus `raw_json`; it does not produce Chinese business headers.
+- The OpenCLI adapter returns source-shaped scalar rows; it does not produce Chinese business headers or JSON blob fields.
 - The Python business script performs ETL from adapter rows into the target sheet schema.
-- Raw JSON files under `artifacts/shein-daily-traffic/raw` are the local source of truth for audit/replay.
-- If this flow later writes to MongoDB or another DB, the DB record should store raw adapter rows or each row's `raw_json`; it should not store only the ETL-transformed sheet rows.
+- DB raw records are the source of truth for audit/replay and future ETL.
+- MaybeAI Sheet output is only the current business-facing projection, not the raw-data archive.
 
 ## play-be Migration Contract
 
@@ -329,7 +319,7 @@ Update `docs/adapters/browser/shein.md` with:
 - Header sanitization drops `cookie`, `host`, `content-length`, `origin`, `referer`, and `sec-*`.
 - Payload validation rejects non-zero `code`.
 - Row flattening maps raw SHEIN camelCase fields to snake_case output.
-- Campaign flattening joins names/ids and serializes JSON.
+- Campaign flattening joins names/ids without returning nested campaign JSON.
 - Pagination stops on empty page, short page, total count, `limit`, and `maxPages`.
 
 Run:
@@ -376,10 +366,10 @@ npm run build-manifest
 
 - `opencli shein daily-traffic --startDate <day> --endDate <day> -f json` returns non-empty rows for a logged-in SHEIN profile with valid data.
 - The adapter does not require committed credentials and does not replay raw cookies manually.
-- Adapter output includes `raw_json` and all raw/source columns needed for the retained daily-traffic sheet fields.
-- The target sheet omits `每日流量明细JSON`; `活动信息JSON`, `权益活动JSON`, and `原始JSON` remain.
-- Any future DB/archive write stores raw adapter rows or `raw_json`; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
-- The sync script can dry-run, save raw JSON, and skip MaybeAI writes.
+- Adapter output includes all source scalar columns needed for the retained daily-traffic sheet fields and omits JSON blob fields.
+- The target sheet omits all JSON blob columns: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`.
+- DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
+- The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.
 - The sync script can write one store/day to MaybeAI Sheet using `update_data_keep_headers`.
 - Re-running the same store/day with `--skip-existing-days` performs no SHEIN fetch and exits successfully.
 - Re-running with `--no-skip-existing-days` merges rows by unique key instead of duplicating rows.
@@ -389,7 +379,7 @@ npm run build-manifest
 ## Risks And Mitigations
 
 - SHEIN may have changed the endpoint from `/sbn/new_goods/get_skc_diagnose_list`. Mitigation: the adapter's first implementation must capture the live request from the page, and tests should isolate endpoint matching in one helper.
-- The legacy task may have enriched daily detail from another endpoint. Mitigation: omit `每日流量明细JSON` for this implementation and add it later only if a real capture proves a useful source field and downstream need.
+- The legacy task may have enriched nested JSON fields from another endpoint. Mitigation: omit all JSON blob sheet fields for this implementation because raw data is already stored in DB; add scalar business fields later only when there is a concrete downstream need.
 - Existing play-be skipped whole days based on any matching row. Mitigation: keep the same default in the script, while offering `--no-skip-existing-days` for backfills or correction runs.
 - SHEIN sessions are fragile. Mitigation: copy the existing SHEIN script preflight login and retry behavior, and document that parallel commands against the same Browser Bridge profile are unsupported.
 

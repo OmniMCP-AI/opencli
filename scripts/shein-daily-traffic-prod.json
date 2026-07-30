@@ -1,28 +1,27 @@
 {
   "defaults": {
     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c370e55e966f026e1d8",
-    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c410e55e966f026e1e5"
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c410e55e966f026e1e5",
+    "worksheet_name": "每日流量ETL",
+    "sheet_display_days": 30
   },
   "stores": [
     {
       "key": "store1",
       "store": "店1",
       "profile": "jegkb2wv",
-      "worksheet_name": "店1每日流量ETL",
       "raw_db_worksheet_name": "店1每日流量"
     },
     {
       "key": "store2",
       "store": "店2",
       "profile": "m3cjm28a",
-      "worksheet_name": "店2每日流量ETL",
       "raw_db_worksheet_name": "店2每日流量"
     },
     {
       "key": "store3",
       "store": "店3",
       "profile": "w2db43wa",
-      "worksheet_name": "店3每日流量ETL",
       "raw_db_worksheet_name": "店3每日流量"
     }
   ]

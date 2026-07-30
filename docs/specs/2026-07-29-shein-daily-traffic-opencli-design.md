@@ -208,6 +208,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
 - `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
 - `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
+- `--skip-sheet-write`: skip final ETL Sheet merge/write. With `--etl-source fresh --raw-db`, the script still crawls missing requested days and saves each successful day to raw DB, but does not update the business Sheet.
 - `--store-config`: JSON config for sequential multi-store runs. Defaults can hold shared ETL/raw workbook URIs, worksheet name, and display window; store entries provide `key`, `store`, `profile`, and raw worksheet name.
 - `--store-key`: optional repeatable filter for `--store-config` keys, ids, or store names.
 - `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.
@@ -388,6 +389,7 @@ npm run build-manifest
 - With `--etl-source raw-api`, the script calls the configured raw read API for a 30-day window and ETLs the returned raw rows.
 - DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.
+- The sync script can run crawl-only with `--raw-db --skip-sheet-write`, saving raw DB snapshots without touching the ETL Sheet.
 - The sync script can write one store/day to MaybeAI Sheet using `update_data_keep_headers`.
 - Re-running the same store/day with `--skip-existing-days` performs no SHEIN fetch only when raw DB already has that store/day snapshot, and exits successfully.
 - Re-running with `--no-skip-existing-days` merges rows by unique key instead of duplicating rows.

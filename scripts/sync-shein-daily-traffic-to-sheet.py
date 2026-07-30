@@ -241,6 +241,8 @@ STORE_CONFIG_ALIASES = {
     "worksheet-name": "worksheet_name",
     "sheetDisplayDays": "sheet_display_days",
     "sheet-display-days": "sheet_display_days",
+    "skipSheetWrite": "skip_sheet_write",
+    "skip-sheet-write": "skip_sheet_write",
     "rawDbUri": "raw_db_uri",
     "raw-db-uri": "raw_db_uri",
     "rawDbWorksheetName": "raw_db_worksheet_name",
@@ -253,6 +255,7 @@ STORE_CONFIG_ALLOWED_KEYS = {
     "sheet_url",
     "worksheet_name",
     "sheet_display_days",
+    "skip_sheet_write",
     "raw_db_uri",
     "raw_db_worksheet_name",
 }
@@ -1728,6 +1731,7 @@ def read_existing_for_sync(args: argparse.Namespace, client: MaybeAIClient, targ
 
 def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     requested_days = resolve_requested_days(args)
+    skip_sheet_write = bool(getattr(args, "skip_sheet_write", False))
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
     print(f"SHEIN daily traffic date range: {requested_days[0]} to {requested_days[-1]}")
     print(f"SHEIN daily traffic target sheet URL: {args.sheet_url}")
@@ -1741,9 +1745,17 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     raw_snapshot_days: set[str] = set()
     existing_raw_rows: list[dict[str, Any]] = []
 
-    if not args.dry_run or args.skip_existing_days or (args.raw_db and not args.dry_run) or args.etl_source == "raw-api":
+    needs_sheet_target = not args.dry_run and not skip_sheet_write
+    needs_client = (
+        needs_sheet_target
+        or args.skip_existing_days
+        or (args.raw_db and not args.dry_run)
+        or args.etl_source == "raw-api"
+    )
+
+    if needs_client:
         client = build_maybeai_client(args)
-        if not args.dry_run:
+        if needs_sheet_target:
             target, worksheet_name = build_sheet_target(args, client)
             print(
                 "MaybeAI daily traffic sheet read/write target: "
@@ -1801,6 +1813,13 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if args.dry_run:
         print("Dry run enabled; skipping MaybeAI sheet write.")
         print(f"[{args.store}] Store completed: dry_run=true, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, etl_rows={len(records)}.")
+        return
+    if skip_sheet_write:
+        print("Skip sheet write enabled; skipping ETL sheet merge/write.")
+        print(
+            f"[{args.store}] Store completed: skip_sheet_write=true, fetched_days={len(missing_days)}, "
+            f"skipped_days={len(skipped_days)}, adapter_rows={len(adapter_rows)}, etl_rows={len(records)}."
+        )
         return
     if not records:
         print("No fresh SHEIN daily traffic rows; skipping MaybeAI sheet merge/write.")
@@ -1865,7 +1884,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Days to request from the raw API ending at --end-date. Default: {DEFAULT_RAW_READ_DAYS}")
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh", help="Use freshly crawled CLI rows or rows loaded back from the raw API for Sheet ETL. Default: fresh")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
-    parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at --end-date. Raw DB saves still use the requested date range.")
+    parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at the latest date present in merged ETL records. Raw DB saves still use the requested date range.")
+    parser.add_argument("--skip-sheet-write", action="store_true", help="Fetch and optionally save raw DB rows, run ETL summary, and skip final ETL sheet merge/write. Off by default.")
     parser.add_argument("--clear-worksheet-data", action="store_true", help="Discard existing data rows before writing fetched rows. Headers are preserved.")
     parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when the raw DB worksheet already has a snapshot for that date. Default: true")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")

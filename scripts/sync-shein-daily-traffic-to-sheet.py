@@ -1640,9 +1640,28 @@ def read_worksheet_row_count(client: MaybeAIClient, target: dict[str, Any]) -> i
     result = client.post(WORKSHEET_DIMENSIONS_PATH, payload, timeout=30)
     if result.get("success") is False:
         raise SyncError(f"MaybeAI worksheet dimensions did not succeed:\n{json.dumps(result, ensure_ascii=False)}")
-    row_count = extract_worksheet_row_count(result)
+    try:
+        row_count = extract_worksheet_row_count(result)
+    except SyncError:
+        retry_payload = worksheet_dimensions_gid_only_payload(payload)
+        if retry_payload is None:
+            raise
+        print("Worksheet dimensions row count missing; retrying with gid-only payload...")
+        retry_result = client.post(WORKSHEET_DIMENSIONS_PATH, retry_payload, timeout=30)
+        if retry_result.get("success") is False:
+            raise SyncError(f"MaybeAI worksheet dimensions did not succeed:\n{json.dumps(retry_result, ensure_ascii=False)}")
+        row_count = extract_worksheet_row_count(retry_result)
     print(f"Worksheet dimensions row count: {row_count}")
     return row_count
+
+
+def worksheet_dimensions_gid_only_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    gid = payload.get("gid") or payload.get("sheet_id")
+    uri = str(payload.get("uri", "") or "").strip()
+    if not gid or not uri:
+        return None
+    retry_payload = {"uri": uri, "gid": str(gid), "sheet_id": str(gid)}
+    return retry_payload
 
 
 def read_sheet_records(

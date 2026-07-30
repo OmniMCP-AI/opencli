@@ -847,6 +847,50 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         })
         self.assertEqual([payload["range_address"] for payload in client.payloads[1:]], ["A1:AD3", "A4:AD5"])
 
+    def test_read_worksheet_row_count_retries_dimensions_with_gid_only_payload(self) -> None:
+        class FakeClient:
+            def __init__(fake_self) -> None:
+                fake_self.calls = []
+
+            def post(fake_self, path: str, payload: dict, timeout: int = 300) -> dict:
+                fake_self.calls.append((path, payload, timeout))
+                if len(fake_self.calls) == 1:
+                    return {
+                        "success": True,
+                        "engine": "composite",
+                        "worksheet_count": 0,
+                        "worksheets": [],
+                    }
+                return {
+                    "success": True,
+                    "engine": "base",
+                    "worksheets": [{
+                        "gid": 41,
+                        "worksheet_name": "每日流量",
+                        "dimensions": {"rows": 26392, "columns": 30},
+                        "row_count": 26392,
+                    }],
+                }
+
+        client = FakeClient()
+        row_count = sync.read_worksheet_row_count(
+            client,
+            {"uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41", "worksheet_name": "每日流量"},
+        )
+
+        self.assertEqual(row_count, 26392)
+        self.assertEqual(client.calls[0][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41",
+            "worksheet_name": "每日流量",
+            "gid": "41",
+            "sheet_id": "41",
+        })
+        self.assertEqual(client.calls[1][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41",
+            "gid": "41",
+            "sheet_id": "41",
+        })
+
     def test_write_verification_reads_each_fetched_day_by_written_row_range(self) -> None:
         class FakeClient:
             def __init__(fake_self) -> None:

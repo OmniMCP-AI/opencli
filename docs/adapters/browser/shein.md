@@ -379,6 +379,8 @@ Important options:
 | `--attempts <n>` | Whole SHEIN CLI retry attempts. Defaults to `3`. |
 | `--preflight-login` / `--no-preflight-login` | Enable or disable the `whoami` preflight. Enabled by default. |
 
+When `--store-config` provides target defaults, explicit CLI values win for that run. For example, `--sheet-url` can point all configured stores at another ETL Sheet, and `--sheet-display-days` can override config `sheet_display_days`.
+
 Daily logs are appended to:
 
 ```text

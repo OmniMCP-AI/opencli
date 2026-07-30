@@ -260,6 +260,16 @@ STORE_CONFIG_ALLOWED_KEYS = {
     "raw_db_worksheet_name",
 }
 
+STORE_CONFIG_FILL_ONLY_KEYS = {
+    "sheet_url",
+    "sheet_display_days",
+}
+
+CLI_OVERRIDE_OPTION_DESTS = {
+    "--sheet-url": "sheet_url",
+    "--sheet-display-days": "sheet_display_days",
+}
+
 
 def normalize_store_config_mapping(raw: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
@@ -321,14 +331,27 @@ def args_for_store_config(args: argparse.Namespace, config: dict[str, Any]) -> a
         values = {
             key: getattr(args, key)
             for key in dir(args)
-            if not key.startswith("_") and not callable(getattr(args, key))
+            if (not key.startswith("_") or key == "_cli_override_keys") and not callable(getattr(args, key))
         }
     scoped = argparse.Namespace(**values)
+    cli_override_keys = set(getattr(scoped, "_cli_override_keys", set()) or set())
     for key in STORE_CONFIG_ALLOWED_KEYS:
         value = config.get(key)
+        if key in STORE_CONFIG_FILL_ONLY_KEYS and key in cli_override_keys:
+            continue
         if value is not None and value != "":
             setattr(scoped, key, value)
     return scoped
+
+
+def annotate_cli_override_keys(args: argparse.Namespace, argv: list[str]) -> None:
+    override_keys: set[str] = set()
+    for token in argv:
+        option = token.split("=", 1)[0]
+        dest = CLI_OVERRIDE_OPTION_DESTS.get(option)
+        if dest:
+            override_keys.add(dest)
+    setattr(args, "_cli_override_keys", override_keys)
 
 
 def maybeai_token() -> str:
@@ -1924,6 +1947,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    annotate_cli_override_keys(args, sys.argv[1:])
     if args.self_test:
         return run_self_test()
 

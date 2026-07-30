@@ -775,7 +775,7 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText = '', relo
           }
           return el;
         };
-        const visibleTexts = () => Array.from(document.querySelectorAll('button,[role="button"],span,div,a'))
+        const visibleTexts = () => Array.from(document.querySelectorAll('button,[role="button"],a,.el-button,.ant-btn,span,div'))
           .filter(visible)
           .map((el) => textOf(el))
           .filter(Boolean)
@@ -880,13 +880,19 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText = '', relo
             let clicked = false;
             const normalizedClickText = String(clickText).replace(/\\s+/g, '');
             while (Date.now() < deadline) {
-              const candidates = Array.from(document.querySelectorAll('button,[role="button"],span,div,a'))
+              const primaryCandidates = Array.from(document.querySelectorAll('button,[role="button"],a,.el-button,.ant-btn'))
                 .filter((el) => visible(el) && compactTextOf(el).includes(normalizedClickText));
+              const fallbackCandidates = Array.from(document.querySelectorAll('span,div'))
+                .filter((el) => visible(el) && compactTextOf(el).includes(normalizedClickText));
+              const candidates = [...primaryCandidates, ...fallbackCandidates];
               const target = candidates.find((el) => compactTextOf(el) === normalizedClickText) || candidates[0];
               if (target) {
                 const clickable = resolveClickable(target);
                 try { clickable.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' }); } catch {}
+                clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true }));
+                clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, composed: true }));
                 clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
+                try { clickable.click?.(); } catch {}
                 clicked = true;
                 break;
               }
@@ -920,12 +926,49 @@ async function captureRequestViaPageTap(page, { pattern, timeoutMs, targetUrl, c
     return asArray(result.captures);
 }
 
-async function ensureActivityPage(page) {
-    await page.goto(ACTIVITY_LIST_PAGE_URL);
-    await page.wait(4);
-    const href = stringValue(unwrapEvaluateResult(await page.evaluate('location.href')));
-    if (href.startsWith(BASE_URL)) return;
-    throw new CommandExecutionError(`SHEIN activity navigation failed before API fetch: current=${href || '<empty>'}`);
+function buildActivityListPageStateJs() {
+    return `
+      (() => {
+        const visible = (el) => {
+          if (!(el instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+        const textOf = (el) => (el?.textContent || '').replace(/\\s+/g, ' ').trim();
+        const candidates = Array.from(document.querySelectorAll('button,[role="button"],span,div,a'))
+          .filter(visible)
+          .map((el) => textOf(el))
+          .filter(Boolean);
+        const searchButtons = Array.from(document.querySelectorAll('button,[role="button"],a,.el-button,.ant-btn'))
+          .filter((el) => visible(el) && textOf(el).replace(/\\s+/g, '') === '搜索');
+        return {
+          href: location.href,
+          hasCreateRecord: candidates.some((text) => text.replace(/\\s+/g, '').includes('创建记录')),
+          hasSearchButton: searchButtons.length > 0,
+          availableTexts: candidates.slice(0, 30),
+        };
+      })()
+    `;
+}
+
+async function readActivityListPageState(page) {
+    return asObject(unwrapEvaluateResult(await page.evaluate(buildActivityListPageStateJs())));
+}
+
+async function ensureActivityPage(page, options = {}) {
+    const attempts = parsePositiveInt(options.attempts, 'activity page navigation attempts', 3);
+    let lastState = {};
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        await page.goto(ACTIVITY_LIST_PAGE_URL, { waitUntil: 'none' });
+        await page.wait(attempt === 1 ? 4 : 2);
+        lastState = await readActivityListPageState(page);
+        const href = stringValue(lastState.href);
+        if (href.startsWith(BASE_URL) && lastState.hasCreateRecord === true && lastState.hasSearchButton === true) return lastState;
+    }
+    const href = stringValue(lastState.href);
+    const availableTexts = asArray(lastState.availableTexts).join(' | ');
+    throw new CommandExecutionError(`SHEIN activity list page not ready before API fetch: current=${href || '<empty>'}${availableTexts ? ` available=${availableTexts}` : ''}`);
 }
 
 async function ensureActivityDetailPage(page, activityId) {
@@ -941,13 +984,24 @@ async function ensureActivityDetailPage(page, activityId) {
 
 async function captureFirstActivityPage(page, options) {
     await ensureActivityPage(page);
-    const captures = await captureRequestViaPageTap(page, {
+    const captureWithClick = async (clickText) => captureRequestViaPageTap(page, {
         pattern: ACTIVITY_LIST_API_PATTERN,
         timeoutMs: options.timeoutMs,
         targetUrl: '',
-        clickText: '创建记录',
+        clickText,
         label: 'SHEIN activity list first-page response',
     });
+    let captures;
+    try {
+        captures = await captureWithClick('创建记录');
+    } catch (error) {
+        const message = String(error?.message || error);
+        if (!message.includes('button not found: 创建记录 current=about:blank') && !message.includes('capture timeout')) throw error;
+        await ensureActivityPage(page);
+        captures = message.includes('capture timeout')
+            ? await captureWithClick('搜索')
+            : await captureWithClick('创建记录');
+    }
     return extractActivityCaptureContext(captures);
 }
 
@@ -1041,6 +1095,8 @@ export const __test__ = {
     fetchActivityRows,
     detailHeaders,
     buildTapCaptureJs,
+    buildActivityListPageStateJs,
+    ensureActivityPage,
     getRows,
     getTotalCount,
     getTotalPages,

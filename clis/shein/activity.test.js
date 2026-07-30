@@ -95,6 +95,54 @@ describe('shein activity adapter', () => {
         expect(headers['x-req-sso-zone-id']).toBeTruthy();
     });
 
+    it('retries activity list navigation until 创建记录 is visible', async () => {
+        const states = [
+            { href: 'about:blank', hasCreateRecord: false, hasSearchButton: false, availableTexts: [] },
+            { href: 'https://sso.geiwohuo.com/#/mars/tools/list', hasCreateRecord: true, hasSearchButton: true, availableTexts: ['创建记录', '搜索'] },
+        ];
+        const page = {
+            gotoCalls: [],
+            goto: async (url, options) => { page.gotoCalls.push([url, options]); },
+            wait: async () => {},
+            evaluate: async () => states.shift(),
+        };
+
+        await expect(__test__.ensureActivityPage(page, { attempts: 2 })).resolves.toMatchObject({
+            href: 'https://sso.geiwohuo.com/#/mars/tools/list',
+            hasCreateRecord: true,
+            hasSearchButton: true,
+        });
+        expect(page.gotoCalls).toEqual([
+            ['https://sso.geiwohuo.com/#/mars/tools/list', { waitUntil: 'none' }],
+            ['https://sso.geiwohuo.com/#/mars/tools/list', { waitUntil: 'none' }],
+        ]);
+    });
+
+    it('fails activity list navigation when 创建记录 never appears', async () => {
+        const page = {
+            goto: async () => {},
+            wait: async () => {},
+            evaluate: async () => ({
+                href: 'https://sso.geiwohuo.com/#/mars/tools/list',
+                hasCreateRecord: false,
+                hasSearchButton: false,
+                availableTexts: ['搜索', '导出'],
+            }),
+        };
+
+        await expect(__test__.ensureActivityPage(page, { attempts: 1 })).rejects.toThrow(
+            'SHEIN activity list page not ready before API fetch: current=https://sso.geiwohuo.com/#/mars/tools/list available=搜索 | 导出',
+        );
+    });
+
+    it('detects 创建记录 in the activity list page state script', () => {
+        const script = __test__.buildActivityListPageStateJs();
+
+        expect(script).toContain('hasCreateRecord');
+        expect(script).toContain('hasSearchButton');
+        expect(script).toContain('创建记录');
+    });
+
     it('splits activity ids from cli strings and list rows', () => {
         expect(__test__.splitActivityIds('101, 102\n103')).toEqual(['101', '102', '103']);
         expect(__test__.splitActivityIds('["201","202",203]')).toEqual(['201', '202', '203']);

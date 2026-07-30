@@ -204,7 +204,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
 - `--raw-db-worksheet-suffix`: default `每日流量`, matching the staging worksheet pattern such as `店3每日流量`.
 - `--raw-db-type`: default `shein_daily_traffic`, used by the later raw read API query.
-- `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` and ETLs the returned raw rows instead of directly ETLing the current CLI rows.
+- `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path`, crawls and saves any requested days missing from raw DB, then ETLs the combined raw DB rows plus fresh rows.
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
 - `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
 - `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
@@ -386,7 +386,7 @@ npm run build-manifest
 - Adapter output includes all source scalar columns needed for the retained daily-traffic sheet fields and preserves raw payload fields for DB persistence.
 - The target sheet omits all JSON blob columns: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`.
 - With `--raw-db`, the script writes each fetched day to the raw worksheet and calls `save_table_worksheet_to_mongodb` with `data_date`, `uri`, and `worksheet_name` immediately after that day succeeds.
-- With `--etl-source raw-api`, the script calls the configured raw read API for a 30-day window and ETLs the returned raw rows.
+- With `--etl-source raw-api`, the script calls the configured raw read API for a requested window, crawls/saves missing raw DB days, and ETLs the combined raw and fresh rows.
 - DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.
 - The sync script can run crawl-only with `--raw-db --skip-sheet-write`, saving raw DB snapshots without touching the ETL Sheet.

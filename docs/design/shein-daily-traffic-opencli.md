@@ -274,7 +274,7 @@ Script phases:
 8. login and retry when auth/session failures are detected;
 9. call `opencli shein daily-traffic -f json` only for missing days;
 10. when `--raw-db` is set, write each successfully fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb` immediately before fetching the next day;
-11. when `--etl-source raw-api` is set, read the configured raw API for the 30-day window ending at the requested end date;
+11. when `--etl-source raw-api` is set, read the configured raw API for the requested window, crawl and save any missing raw DB days, then combine raw API rows with fresh rows;
 12. ETL source rows to sheet records;
 13. merge by unique key;
 14. sort by date desc, then SKC asc;
@@ -319,7 +319,7 @@ Raw DB options:
 - `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
 - `--raw-db-worksheet-suffix`: default `每日流量`, matching the staging worksheet convention such as `店3每日流量`.
 - `--raw-db-type`: default `shein_daily_traffic`, used when querying the later raw API.
-- `--etl-source fresh|raw-api`: default `fresh`; `raw-api` reads raw rows back before ETL.
+- `--etl-source fresh|raw-api`: default `fresh`; `raw-api` reads raw rows back before ETL and automatically crawls/saves requested days that are missing from raw DB.
 - `--raw-db-read-path`: required by `--etl-source raw-api`; this repo does not assume a concrete read endpoint.
 - `--raw-read-days`: default `30`; read window ends at `--end-date`.
 - `--skip-sheet-write`: skip final ETL Sheet merge/write after fetch/ETL summary. With `--etl-source fresh --raw-db`, this is the crawl-only mode: each missing day is crawled and saved to raw DB, but the business Sheet is not touched.

@@ -142,6 +142,38 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         read_existing.assert_not_called()
         write_records.assert_not_called()
 
+    def test_raw_api_mode_fetches_and_saves_missing_days_before_sheet_etl(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": "etl-sheet",
+            "dry_run": False,
+            "skip_sheet_write": False,
+            "skip_existing_days": True,
+            "raw_db": False,
+            "etl_source": "raw-api",
+            "sheet_display_days": None,
+            "clear_worksheet_data": True,
+            "ensure_headers": False,
+        })()
+        raw_response = {"result": {"snapshots": [{"data_date": "2026-07-01", "headers": ["date", "skc"], "rows": [["2026-07-01", "raw-skc"]]}]}}
+        written_records: list[dict] = []
+
+        with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02"]), \
+            mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "每日流量ETL")), \
+            mock.patch.object(sync, "read_existing_for_sync", return_value=[]), \
+            mock.patch.object(sync, "read_raw_api_snapshot_response", return_value=raw_response), \
+            mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"date": "2026-07-02", "skc": "fresh-skc"}]) as fetch_rows, \
+            mock.patch.object(sync, "write_sheet_records", side_effect=lambda _client, _target, records, _args: written_records.extend(records)), \
+            mock.patch.object(sync, "verify_written_days"):
+            sync.run_sync(args, Path("."))
+
+        fetch_args = fetch_rows.call_args.args[0]
+        self.assertTrue(fetch_args.raw_db)
+        self.assertEqual(fetch_rows.call_args.args[3], ["2026-07-02"])
+        self.assertEqual([row["商品货号"] for row in written_records], ["fresh-skc", "raw-skc"])
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

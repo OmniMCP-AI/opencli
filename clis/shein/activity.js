@@ -624,12 +624,15 @@ async function fetchActivityListPage(page, headers, baseBody, pageNum, options) 
 
 function detailHeaders(baseHeaders, activityId) {
     const route = `${ACTIVITY_DETAIL_ROUTE_PREFIX}/${encodeURIComponent(activityId)}`;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
     return {
         ...filterReplayableHeaders(baseHeaders),
         'origin-url': `${BASE_URL}${route}`,
         'x-bbl-route': route.replace('/#', ''),
-        lan: 'zh-cn',
-        'x-lt-language': 'zh-cn',
+        'x-req-zone-id': timezone,
+        'x-req-sso-zone-id': timezone,
+        lan: 'CN',
+        'x-lt-language': 'CN',
     };
 }
 
@@ -718,6 +721,11 @@ async function fetchActivityRows(page, firstPageContext, options) {
         }
     }
 
+    const firstActivityId = extractActivityId(activities[0]);
+    if (firstActivityId) {
+        await ensureActivityDetailPage(page, firstActivityId);
+    }
+
     const detailGroups = await mapConcurrent(activities, options.detailConcurrency, async (activity) => fetchActivityDetailPages(
         page,
         firstPageContext.headers,
@@ -734,13 +742,13 @@ async function fetchActivityRows(page, firstPageContext, options) {
     return options.limitRows == null ? rows : rows.slice(0, options.limitRows);
 }
 
-function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false, reloadIfSameUrl = false }) {
+function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText = '', reloadIfSameUrl = false }) {
     return `
       (async () => {
         const pattern = ${JSON.stringify(pattern)};
         const timeoutMs = ${JSON.stringify(timeoutMs)};
         const targetUrl = ${JSON.stringify(targetUrl || '')};
-        const clickSearch = ${clickSearch ? 'true' : 'false'};
+        const clickText = ${JSON.stringify(clickText || '')};
         const reloadIfSameUrl = ${reloadIfSameUrl ? 'true' : 'false'};
         const captures = [];
         const errors = [];
@@ -754,6 +762,29 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
           return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
         };
         const textOf = (el) => (el?.textContent || '').replace(/\\s+/g, ' ').trim();
+        const compactTextOf = (el) => textOf(el).replace(/\\s+/g, '');
+        const resolveClickable = (el) => {
+          let current = el;
+          for (let depth = 0; current && depth < 5; depth += 1) {
+            const tag = String(current.tagName || '').toLowerCase();
+            const role = String(current.getAttribute?.('role') || '').toLowerCase();
+            if (tag === 'button' || tag === 'a' || role === 'button' || typeof current.onclick === 'function') {
+              return current;
+            }
+            current = current.parentElement;
+          }
+          return el;
+        };
+        const visibleTexts = () => Array.from(document.querySelectorAll('button,[role="button"],span,div,a'))
+          .filter(visible)
+          .map((el) => textOf(el))
+          .filter(Boolean)
+          .slice(0, 30);
+        const dismissShownDialogs = () => {
+          Array.from(document.querySelectorAll('div.so-modal-show')).forEach((el) => {
+            try { el.classList.remove('so-modal-show'); } catch {}
+          });
+        };
         const pushCapture = (payload) => {
           captures.push(payload);
           if (!finished) {
@@ -843,18 +874,25 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
               await new Promise((resolve) => setTimeout(resolve, 1500));
             }
           }
-          if (clickSearch) {
+          if (clickText) {
+            dismissShownDialogs();
             const deadline = Date.now() + Math.min(timeoutMs, 15000);
+            let clicked = false;
+            const normalizedClickText = String(clickText).replace(/\\s+/g, '');
             while (Date.now() < deadline) {
-              const candidates = Array.from(document.querySelectorAll('button,[role="button"],.el-button,.ant-btn'))
-                .filter((el) => visible(el) && textOf(el).includes('搜索'));
-              const target = candidates.find((el) => textOf(el) === '搜索') || candidates[0];
+              const candidates = Array.from(document.querySelectorAll('button,[role="button"],span,div,a'))
+                .filter((el) => visible(el) && compactTextOf(el).includes(normalizedClickText));
+              const target = candidates.find((el) => compactTextOf(el) === normalizedClickText) || candidates[0];
               if (target) {
-                target.click();
+                const clickable = resolveClickable(target);
+                try { clickable.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' }); } catch {}
+                clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
+                clicked = true;
                 break;
               }
               await new Promise((resolve) => setTimeout(resolve, 250));
             }
+            if (!clicked) return { ok: false, reason: 'button not found: ' + clickText, captures, errors, href: location.href, availableTexts: visibleTexts() };
           }
           const timedOut = await Promise.race([
             capturePromise.then(() => false),
@@ -869,10 +907,11 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch = false,
     `;
 }
 
-async function captureRequestViaPageTap(page, { pattern, timeoutMs, targetUrl, clickSearch, label, reloadIfSameUrl = false }) {
-    const result = unwrapEvaluateResult(await page.evaluate(buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickSearch, reloadIfSameUrl })));
+async function captureRequestViaPageTap(page, { pattern, timeoutMs, targetUrl, clickText, label, reloadIfSameUrl = false }) {
+    const result = unwrapEvaluateResult(await page.evaluate(buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText, reloadIfSameUrl })));
     if (!result?.ok) {
-        throw new CommandExecutionError(`${label} failed: ${stringValue(result?.reason) || 'unknown reason'} current=${stringValue(result?.href) || '<empty>'}`);
+        const availableTexts = asArray(result?.availableTexts).join(' | ');
+        throw new CommandExecutionError(`${label} failed: ${stringValue(result?.reason) || 'unknown reason'} current=${stringValue(result?.href) || '<empty>'}${availableTexts ? ` available=${availableTexts}` : ''}`);
     }
     if (asArray(result.errors).length > 0) {
         const first = asObject(asArray(result.errors)[0]);
@@ -889,28 +928,26 @@ async function ensureActivityPage(page) {
     throw new CommandExecutionError(`SHEIN activity navigation failed before API fetch: current=${href || '<empty>'}`);
 }
 
+async function ensureActivityDetailPage(page, activityId) {
+    const normalizedActivityId = stringValue(activityId).trim();
+    if (!normalizedActivityId) return;
+    const targetUrl = `${BASE_URL}${ACTIVITY_DETAIL_ROUTE_PREFIX}/${encodeURIComponent(normalizedActivityId)}`;
+    await page.goto(targetUrl);
+    await page.wait(2);
+    const href = stringValue(unwrapEvaluateResult(await page.evaluate('location.href')));
+    if (href.includes(`/obm-time-limit-info/${encodeURIComponent(normalizedActivityId)}`)) return;
+    throw new CommandExecutionError(`SHEIN activity detail navigation failed before detail fetch: current=${href || '<empty>'}`);
+}
+
 async function captureFirstActivityPage(page, options) {
     await ensureActivityPage(page);
-    let captures;
-    try {
-        captures = await captureRequestViaPageTap(page, {
-            pattern: ACTIVITY_LIST_API_PATTERN,
-            timeoutMs: options.timeoutMs,
-            targetUrl: ACTIVITY_LIST_PAGE_URL,
-            clickSearch: true,
-            label: 'SHEIN activity list first-page response',
-        });
-    } catch (error) {
-        if (!String(error?.message || error).includes('capture timeout')) throw error;
-        captures = await captureRequestViaPageTap(page, {
-            pattern: ACTIVITY_LIST_API_PATTERN,
-            timeoutMs: options.timeoutMs,
-            targetUrl: ACTIVITY_LIST_PAGE_URL,
-            clickSearch: false,
-            reloadIfSameUrl: true,
-            label: 'SHEIN activity list first-page response',
-        });
-    }
+    const captures = await captureRequestViaPageTap(page, {
+        pattern: ACTIVITY_LIST_API_PATTERN,
+        timeoutMs: options.timeoutMs,
+        targetUrl: '',
+        clickText: '创建记录',
+        label: 'SHEIN activity list first-page response',
+    });
     return extractActivityCaptureContext(captures);
 }
 
@@ -1002,6 +1039,8 @@ export const __test__ = {
     buildActivityDetailBody,
     flattenActivityRows,
     fetchActivityRows,
+    detailHeaders,
+    buildTapCaptureJs,
     getRows,
     getTotalCount,
     getTotalPages,

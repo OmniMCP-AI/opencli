@@ -66,6 +66,35 @@ describe('shein activity adapter', () => {
         });
     });
 
+    it('builds activity list capture script around 创建记录 instead of 搜索', () => {
+        const script = __test__.buildTapCaptureJs({
+            pattern: '/query_obm_activity_list',
+            timeoutMs: 120000,
+            clickText: '创建记录',
+        });
+
+        expect(script).toContain('创建记录');
+        expect(script).not.toContain("includes('搜索')");
+    });
+
+    it('builds activity detail headers like the legacy crawler route context', () => {
+        const headers = __test__.detailHeaders({
+            accept: 'application/json',
+            lan: 'zh-cn',
+            'x-lt-language': 'zh-cn',
+        }, '101');
+
+        expect(headers).toMatchObject({
+            accept: 'application/json',
+            'origin-url': 'https://sso.geiwohuo.com/#/mrs/tools/activity/obm-time-limit-info/101',
+            'x-bbl-route': '/mrs/tools/activity/obm-time-limit-info/101',
+            lan: 'CN',
+            'x-lt-language': 'CN',
+        });
+        expect(headers['x-req-zone-id']).toBeTruthy();
+        expect(headers['x-req-sso-zone-id']).toBeTruthy();
+    });
+
     it('splits activity ids from cli strings and list rows', () => {
         expect(__test__.splitActivityIds('101, 102\n103')).toEqual(['101', '102', '103']);
         expect(__test__.splitActivityIds('["201","202",203]')).toEqual(['201', '202', '203']);
@@ -201,6 +230,9 @@ describe('shein activity adapter', () => {
         const inFlight = { current: 0, max: 0 };
         const fetchedBodies = [];
         const page = {
+            href: '',
+            goto: async (url) => { page.href = url; },
+            evaluate: async () => page.href,
             fetchJson: async (url, options) => {
                 fetchedBodies.push({ url, body: options.body });
                 if (url.includes('query_obm_activity_list')) {
@@ -253,6 +285,7 @@ describe('shein activity adapter', () => {
 
         expect(rows.map((row) => row.skc)).toEqual(['skc-a1', 'skc-a2']);
         expect(inFlight.max).toBeLessThanOrEqual(2);
+        expect(page.href).toBe('https://sso.geiwohuo.com/#/mrs/tools/activity/obm-time-limit-info/a1');
         expect(fetchedBodies.filter((item) => item.url.includes('query_obm_activity_list')).map((item) => item.body.page_num)).toEqual([1]);
         expect(fetchedBodies.filter((item) => item.url.includes('query_goods_detail')).map((item) => item.body.activity_id).sort()).toEqual(['a1', 'a2']);
     });
@@ -260,6 +293,9 @@ describe('shein activity adapter', () => {
     it('collects paginated legacy records response shapes', async () => {
         const fetchedBodies = [];
         const page = {
+            href: '',
+            goto: async (url) => { page.href = url; },
+            evaluate: async () => page.href,
             fetchJson: async (url, options) => {
                 fetchedBodies.push({ url, body: options.body });
                 if (url.includes('query_obm_activity_list')) {
@@ -316,6 +352,9 @@ describe('shein activity adapter', () => {
     it('continues full pages until a short page when totals are missing', async () => {
         const fetchedBodies = [];
         const page = {
+            href: '',
+            goto: async (url) => { page.href = url; },
+            evaluate: async () => page.href,
             fetchJson: async (url, options) => {
                 fetchedBodies.push({ url, body: options.body });
                 if (url.includes('query_obm_activity_list')) {

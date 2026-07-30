@@ -780,6 +780,25 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText = '', relo
           .map((el) => textOf(el))
           .filter(Boolean)
           .slice(0, 30);
+        const candidateScore = (el) => {
+          const rect = el.getBoundingClientRect();
+          const tag = String(el.tagName || '').toLowerCase();
+          const role = String(el.getAttribute?.('role') || '').toLowerCase();
+          const isControl = tag === 'button' || tag === 'a' || role === 'button' || el.classList?.contains('el-button') || el.classList?.contains('ant-btn');
+          return [
+            isControl ? 0 : 1,
+            compactTextOf(el).length,
+            Math.round(rect.width * rect.height),
+          ];
+        };
+        const compareCandidates = (a, b) => {
+          const left = candidateScore(a);
+          const right = candidateScore(b);
+          for (let i = 0; i < left.length; i += 1) {
+            if (left[i] !== right[i]) return left[i] - right[i];
+          }
+          return 0;
+        };
         const dismissShownDialogs = () => {
           Array.from(document.querySelectorAll('div.so-modal-show')).forEach((el) => {
             try { el.classList.remove('so-modal-show'); } catch {}
@@ -884,7 +903,7 @@ function buildTapCaptureJs({ pattern, timeoutMs, targetUrl, clickText = '', relo
                 .filter((el) => visible(el) && compactTextOf(el).includes(normalizedClickText));
               const fallbackCandidates = Array.from(document.querySelectorAll('span,div'))
                 .filter((el) => visible(el) && compactTextOf(el).includes(normalizedClickText));
-              const candidates = [...primaryCandidates, ...fallbackCandidates];
+              const candidates = [...primaryCandidates, ...fallbackCandidates].sort(compareCandidates);
               const target = candidates.find((el) => compactTextOf(el) === normalizedClickText) || candidates[0];
               if (target) {
                 const clickable = resolveClickable(target);
@@ -964,7 +983,7 @@ async function ensureActivityPage(page, options = {}) {
         await page.wait(attempt === 1 ? 4 : 2);
         lastState = await readActivityListPageState(page);
         const href = stringValue(lastState.href);
-        if (href.startsWith(BASE_URL) && lastState.hasCreateRecord === true && lastState.hasSearchButton === true) return lastState;
+        if (href.startsWith(BASE_URL) && lastState.hasCreateRecord === true) return lastState;
     }
     const href = stringValue(lastState.href);
     const availableTexts = asArray(lastState.availableTexts).join(' | ');

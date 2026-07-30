@@ -74,6 +74,7 @@ describe('shein activity adapter', () => {
         });
 
         expect(script).toContain('创建记录');
+        expect(script).toContain('candidateScore');
         expect(script).not.toContain("includes('搜索')");
     });
 
@@ -98,7 +99,7 @@ describe('shein activity adapter', () => {
     it('retries activity list navigation until 创建记录 is visible', async () => {
         const states = [
             { href: 'about:blank', hasCreateRecord: false, hasSearchButton: false, availableTexts: [] },
-            { href: 'https://sso.geiwohuo.com/#/mars/tools/list', hasCreateRecord: true, hasSearchButton: true, availableTexts: ['创建记录', '搜索'] },
+            { href: 'https://sso.geiwohuo.com/#/mars/tools/list', hasCreateRecord: true, hasSearchButton: false, availableTexts: ['营销工具创建记录托管记录'] },
         ];
         const page = {
             gotoCalls: [],
@@ -110,7 +111,7 @@ describe('shein activity adapter', () => {
         await expect(__test__.ensureActivityPage(page, { attempts: 2 })).resolves.toMatchObject({
             href: 'https://sso.geiwohuo.com/#/mars/tools/list',
             hasCreateRecord: true,
-            hasSearchButton: true,
+            hasSearchButton: false,
         });
         expect(page.gotoCalls).toEqual([
             ['https://sso.geiwohuo.com/#/mars/tools/list', { waitUntil: 'none' }],

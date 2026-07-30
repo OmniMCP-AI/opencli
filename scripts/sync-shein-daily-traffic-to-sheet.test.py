@@ -357,6 +357,34 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(sync.extract_worksheet_row_count(response), 13337)
 
+    def test_build_sheet_target_resolves_worksheet_from_sheet_url_gid(self) -> None:
+        args = type("Args", (), {
+            "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=3",
+            "worksheet_name": None,
+        })()
+
+        class FakeClient:
+            def post(self, path, payload, timeout=sync.DEFAULT_MAYBEAI_API_TIMEOUT):
+                self.request = (path, payload, timeout)
+                return {"worksheets": [
+                    {"gid": 0, "worksheet_name": "旧表"},
+                    {"gid": 3, "worksheet_name": "每日流量ETL"},
+                ]}
+
+        client = FakeClient()
+        target, worksheet_name = sync.build_sheet_target(args, client)
+
+        self.assertEqual(client.request, (
+            "/api/v1/excel/list_worksheets",
+            {"uri": "https://www.maybe.ai/docs/spreadsheets/d/doc"},
+            30,
+        ))
+        self.assertEqual(target, {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=3",
+            "worksheet_name": "每日流量ETL",
+        })
+        self.assertEqual(worksheet_name, "每日流量ETL")
+
     def test_builds_read_recent_worksheet_snapshots_payload(self) -> None:
         args = type("Args", (), {
             "raw_read_days": 30,
@@ -529,6 +557,30 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(scoped.store, "店1")
         self.assertEqual(scoped.profile, "profile1")
         self.assertEqual(scoped.sheet_url, "cli-sheet")
+
+    def test_command_line_sheet_url_gid_ignores_config_worksheet_name(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/cli?gid=3",
+            "worksheet_name": None,
+            "raw_db_uri": "base-raw",
+            "raw_db_worksheet_name": None,
+            "sheet_display_days": None,
+            "store_config": "stores.json",
+            "store_key": [],
+            "_cli_override_keys": {"sheet_url"},
+        })()
+
+        scoped = sync.args_for_store_config(args, {
+            "store": "店1",
+            "profile": "profile1",
+            "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/config?gid=0",
+            "worksheet_name": "配置里的默认worksheet",
+        })
+
+        self.assertEqual(scoped.sheet_url, "https://www.maybe.ai/docs/spreadsheets/d/cli?gid=3")
+        self.assertIsNone(scoped.worksheet_name)
 
     def test_raw_sheet_records_serialize_json_payloads(self) -> None:
         records = sync.raw_rows_to_sheet_records([
@@ -794,6 +846,50 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "sheet_id": "3",
         })
         self.assertEqual([payload["range_address"] for payload in client.payloads[1:]], ["A1:AD3", "A4:AD5"])
+
+    def test_read_worksheet_row_count_retries_dimensions_with_gid_only_payload(self) -> None:
+        class FakeClient:
+            def __init__(fake_self) -> None:
+                fake_self.calls = []
+
+            def post(fake_self, path: str, payload: dict, timeout: int = 300) -> dict:
+                fake_self.calls.append((path, payload, timeout))
+                if len(fake_self.calls) == 1:
+                    return {
+                        "success": True,
+                        "engine": "composite",
+                        "worksheet_count": 0,
+                        "worksheets": [],
+                    }
+                return {
+                    "success": True,
+                    "engine": "base",
+                    "worksheets": [{
+                        "gid": 41,
+                        "worksheet_name": "每日流量",
+                        "dimensions": {"rows": 26392, "columns": 30},
+                        "row_count": 26392,
+                    }],
+                }
+
+        client = FakeClient()
+        row_count = sync.read_worksheet_row_count(
+            client,
+            {"uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41", "worksheet_name": "每日流量"},
+        )
+
+        self.assertEqual(row_count, 26392)
+        self.assertEqual(client.calls[0][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41",
+            "worksheet_name": "每日流量",
+            "gid": "41",
+            "sheet_id": "41",
+        })
+        self.assertEqual(client.calls[1][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=41",
+            "gid": "41",
+            "sheet_id": "41",
+        })
 
     def test_write_verification_reads_each_fetched_day_by_written_row_range(self) -> None:
         class FakeClient:

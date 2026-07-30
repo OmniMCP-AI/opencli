@@ -540,6 +540,12 @@ def resolve_requested_days(args: argparse.Namespace) -> list[str]:
     return resolve_date_range(start, end)
 
 
+def progress_label(current: int, total: int) -> str:
+    if total <= 0:
+        return f"{current}/{total}"
+    return f"{current}/{total} ({current / total * 100:.1f}%)"
+
+
 def yyyymmdd(value: Any) -> str:
     return normalize_date_input(value).replace("-", "")
 
@@ -601,12 +607,21 @@ def fetch_shein_rows_for_day(args: argparse.Namespace, repo_root: Path, day: str
 
 def fetch_shein_rows(args: argparse.Namespace, repo_root: Path, missing_days: list[str]) -> list[dict[str, Any]]:
     if not missing_days:
+        print(f"[{args.store}] Fetch progress: no missing days; skipping SHEIN daily traffic CLI.")
         return []
     opencli = build_opencli_base(args)
     ensure_shein_session(args, repo_root, opencli)
     rows: list[dict[str, Any]] = []
-    for day in missing_days:
-        rows.extend(fetch_shein_rows_for_day(args, repo_root, day, opencli))
+    total = len(missing_days)
+    print(f"[{args.store}] Fetch progress: days_to_fetch={total}, first_day={missing_days[0]}, last_day={missing_days[-1]}")
+    for index, day in enumerate(missing_days, start=1):
+        print(f"[{args.store}] Fetch started {progress_label(index, total)} day={day}")
+        day_rows = fetch_shein_rows_for_day(args, repo_root, day, opencli)
+        rows.extend(day_rows)
+        print(
+            f"[{args.store}] Fetch completed {progress_label(index, total)} "
+            f"day={day}, rows={len(day_rows)}, cumulative_rows={len(rows)}"
+        )
     return rows
 
 
@@ -966,6 +981,20 @@ def compute_missing_days(days: list[str], existing_records: list[dict[str, Any]]
     return missing, skipped
 
 
+def compute_missing_days_from_existing_days(days: list[str], existing_days: set[str], skip_existing_days: bool = True) -> tuple[list[str], list[str]]:
+    if not skip_existing_days:
+        return list(days), []
+    missing = []
+    skipped = []
+    for day in days:
+        normalized_day = normalize_date_input(day)
+        if normalized_day in existing_days:
+            skipped.append(normalized_day)
+        else:
+            missing.append(normalized_day)
+    return missing, skipped
+
+
 def merge_records_by_unique_key(existing_records: list[dict[str, Any]], fresh_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
     key_order: list[tuple[str, ...]] = []
@@ -1190,10 +1219,58 @@ def save_raw_daily_rows(args: argparse.Namespace, client: "MaybeAIClient", day: 
 
 def save_raw_days(args: argparse.Namespace, client: "MaybeAIClient", days: list[str], rows: list[dict[str, Any]]) -> None:
     if not args.raw_db or args.dry_run:
+        if days:
+            print(f"[{args.store}] Raw DB progress: disabled; skipping {len(days)} day(s).")
         return
     by_date = group_rows_by_date(rows)
-    for day in days:
-        save_raw_daily_rows(args, client, day, by_date.get(day, []))
+    total = len(days)
+    print(f"[{args.store}] Raw DB progress: days_to_save={total}")
+    for index, day in enumerate(days, start=1):
+        day_rows = by_date.get(day, [])
+        print(f"[{args.store}] Raw DB save started {progress_label(index, total)} day={day}, rows={len(day_rows)}")
+        save_raw_daily_rows(args, client, day, day_rows)
+        print(f"[{args.store}] Raw DB save completed {progress_label(index, total)} day={day}, rows={len(day_rows)}")
+
+
+def raw_snapshot_payload(response: Any) -> Any:
+    if isinstance(response, dict) and isinstance(response.get("result"), dict):
+        return response["result"]
+    return response
+
+
+def raw_snapshots_from_response(response: Any) -> list[dict[str, Any]]:
+    payload = raw_snapshot_payload(response)
+    if isinstance(payload, dict) and isinstance(payload.get("snapshots"), list):
+        return [snapshot for snapshot in payload["snapshots"] if isinstance(snapshot, dict)]
+    return []
+
+
+def extract_raw_snapshot_days(response: Any) -> set[str]:
+    days: set[str] = set()
+    for snapshot in raw_snapshots_from_response(response):
+        value = snapshot.get("data_date") or snapshot.get("date") or snapshot.get("dataDate")
+        if value:
+            try:
+                days.add(normalize_date_input(value))
+            except SyncError:
+                continue
+    return days
+
+
+def row_source_day(row: dict[str, Any]) -> str:
+    for key in ("date", "日期", "data_date", "dataDate"):
+        value = row.get(key)
+        if str(value or "").strip():
+            try:
+                return normalize_date_input(value)
+            except SyncError:
+                return ""
+    return ""
+
+
+def filter_rows_by_days(rows: list[dict[str, Any]], days: list[str]) -> list[dict[str, Any]]:
+    day_set = {normalize_date_input(day) for day in days}
+    return [row for row in rows if row_source_day(row) in day_set]
 
 
 def extract_raw_api_rows(response: Any) -> list[dict[str, Any]]:
@@ -1201,13 +1278,17 @@ def extract_raw_api_rows(response: Any) -> list[dict[str, Any]]:
         candidates = response
     elif isinstance(response, dict):
         candidates = []
-        payload = response.get("result") if isinstance(response.get("result"), dict) else response
+        payload = raw_snapshot_payload(response)
         if isinstance(payload, dict) and isinstance(payload.get("snapshots"), list):
             rows: list[dict[str, Any]] = []
             for snapshot in payload["snapshots"]:
                 if not isinstance(snapshot, dict):
                     continue
-                rows.extend(records_from_headers_and_rows(snapshot.get("headers"), snapshot.get("rows")))
+                rows.extend(records_from_headers_and_rows(
+                    snapshot.get("headers"),
+                    snapshot.get("rows"),
+                    data_date=snapshot.get("data_date") or snapshot.get("date") or snapshot.get("dataDate"),
+                ))
             return rows
         for key in ("rows", "data", "records", "items"):
             value = payload.get(key) if isinstance(payload, dict) else None
@@ -1232,14 +1313,17 @@ def extract_raw_api_rows(response: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def records_from_headers_and_rows(headers: Any, rows: Any) -> list[dict[str, Any]]:
+def records_from_headers_and_rows(headers: Any, rows: Any, data_date: Any = None) -> list[dict[str, Any]]:
     if not isinstance(headers, list) or not isinstance(rows, list):
         return []
     normalized_headers = [str(header or "").strip() for header in headers]
     records: list[dict[str, Any]] = []
     for row in rows:
         if isinstance(row, dict):
-            records.append(row)
+            record = dict(row)
+            if data_date and not row_source_day(record):
+                record["date"] = normalize_date_input(data_date)
+            records.append(record)
             continue
         if not isinstance(row, list):
             continue
@@ -1247,6 +1331,8 @@ def records_from_headers_and_rows(headers: Any, rows: Any) -> list[dict[str, Any
         for index, header in enumerate(normalized_headers):
             if header:
                 record[header] = row[index] if index < len(row) else ""
+        if data_date and not row_source_day(record):
+            record["date"] = normalize_date_input(data_date)
         records.append(record)
     return records
 
@@ -1257,15 +1343,20 @@ def raw_api_date_window(requested_days: list[str], read_days: int) -> tuple[str,
     return start_dt.strftime("%Y-%m-%d"), end
 
 
-def read_raw_api_rows(args: argparse.Namespace, client: "MaybeAIClient", requested_days: list[str]) -> list[dict[str, Any]]:
+def read_raw_api_snapshot_response(args: argparse.Namespace, client: "MaybeAIClient", requested_days: list[str]) -> Any:
     if not args.raw_db_read_path:
         raise SyncError("--etl-source raw-api requires --raw-db-read-path.")
     uri = raw_db_uri(args)
     worksheet_name = raw_db_worksheet_name(args, args.store)
     payload = build_read_recent_worksheet_snapshots_payload(args, uri=uri, worksheet_name=worksheet_name)
     print(f"Reading raw SHEIN daily traffic worksheet snapshots: uri={uri}, worksheet={worksheet_name}, last_n_days={args.raw_read_days}")
-    response = client.post(args.raw_db_read_path, payload)
-    rows = extract_raw_api_rows(response)
+    return client.post(args.raw_db_read_path, payload)
+
+
+def read_raw_api_rows(args: argparse.Namespace, client: "MaybeAIClient", requested_days: list[str], response: Any = None) -> list[dict[str, Any]]:
+    if response is None:
+        response = read_raw_api_snapshot_response(args, client, requested_days)
+    rows = filter_rows_by_days(extract_raw_api_rows(response), requested_days)
     print(f"Loaded {len(rows)} raw SHEIN daily traffic rows from API.")
     return rows
 
@@ -1599,15 +1690,19 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
     print(f"SHEIN daily traffic date range: {requested_days[0]} to {requested_days[-1]}")
     print(f"SHEIN daily traffic target sheet URL: {args.sheet_url}")
+    print(f"[{args.store}] Step 1/6: preparing MaybeAI target and reading existing ETL rows.")
 
     existing_records: list[dict[str, Any]] = []
     client: MaybeAIClient | None = None
     target: dict[str, Any] | None = None
     worksheet_name: str | None = None
+    raw_snapshot_response: Any = None
+    raw_snapshot_days: set[str] = set()
+    existing_raw_rows: list[dict[str, Any]] = []
 
     if not args.dry_run or args.skip_existing_days or (args.raw_db and not args.dry_run) or args.etl_source == "raw-api":
         client = build_maybeai_client(args)
-        if not args.dry_run or args.skip_existing_days:
+        if not args.dry_run:
             target, worksheet_name = build_sheet_target(args, client)
             print(
                 "MaybeAI daily traffic sheet read/write target: "
@@ -1616,32 +1711,65 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
             )
             existing_records = [] if args.clear_worksheet_data else read_existing_for_sync(args, client, target)
 
-    missing_days, skipped_days = compute_missing_days(requested_days, existing_records, args.store, args.skip_existing_days)
-    print(f"Date plan: requested={len(requested_days)}, missing={len(missing_days)}, skipped={len(skipped_days)}")
-    if skipped_days:
-        print(f"Skipped existing store/day rows: {', '.join(skipped_days)}")
+    if args.skip_existing_days or args.etl_source == "raw-api":
+        if client is None:
+            client = build_maybeai_client(args)
+        print(f"[{args.store}] Reading raw DB snapshots to decide crawl skip days.")
+        raw_snapshot_response = read_raw_api_snapshot_response(args, client, requested_days)
+        raw_snapshot_days = extract_raw_snapshot_days(raw_snapshot_response)
+        existing_raw_rows = read_raw_api_rows(args, client, requested_days, response=raw_snapshot_response)
+        print(
+            f"[{args.store}] Raw DB snapshot plan source: snapshots={len(raw_snapshot_days)}, "
+            f"raw_rows={len(existing_raw_rows)}."
+        )
 
-    adapter_rows = [] if args.etl_source == "raw-api" else fetch_shein_rows(args, repo_root, missing_days)
+    missing_days, skipped_days = compute_missing_days_from_existing_days(requested_days, raw_snapshot_days, args.skip_existing_days)
+    print(f"Date plan from raw DB: requested={len(requested_days)}, missing={len(missing_days)}, skipped={len(skipped_days)}")
+    if skipped_days:
+        print(f"Skipped existing raw DB days: {', '.join(skipped_days)}")
+    print(
+        f"[{args.store}] Step 2/6: date plan ready; "
+        f"requested={len(requested_days)}, to_fetch={len(missing_days)}, skipped={len(skipped_days)}."
+    )
+
+    print(f"[{args.store}] Step 3/6: fetching SHEIN daily traffic rows.")
+    fetched_rows = [] if args.etl_source == "raw-api" else fetch_shein_rows(args, repo_root, missing_days)
+    print(f"[{args.store}] Step 3/6 completed: fetched adapter_rows={len(fetched_rows)}.")
+    print(f"[{args.store}] Step 4/6: saving raw daily rows if enabled.")
     if client is not None and args.etl_source != "raw-api":
-        save_raw_days(args, client, missing_days, adapter_rows)
+        save_raw_days(args, client, missing_days, fetched_rows)
+    print(f"[{args.store}] Step 4/6 completed.")
+    adapter_rows = [*existing_raw_rows, *fetched_rows]
     if args.etl_source == "raw-api":
         if client is None:
             client = build_maybeai_client(args)
-        adapter_rows = read_raw_api_rows(args, client, requested_days)
+        print(f"[{args.store}] Loading ETL source from raw API.")
+        adapter_rows = read_raw_api_rows(args, client, requested_days, response=raw_snapshot_response)
+        print(f"[{args.store}] Raw API load completed: adapter_rows={len(adapter_rows)}.")
+    else:
+        print(
+            f"[{args.store}] ETL source rows combined: raw_db_rows={len(existing_raw_rows)}, "
+            f"fresh_rows={len(fetched_rows)}, total={len(adapter_rows)}."
+        )
+    print(f"[{args.store}] Step 5/6: running ETL mapping.")
     records = rows_to_records(adapter_rows, args.store)
     summary = traffic_rows_summary(adapter_rows, records, requested_days, missing_days, skipped_days)
     print("SHEIN daily traffic summary:", json.dumps(summary, ensure_ascii=False))
     if records:
         sample = {header: records[0].get(header, "") for header in SHEET_HEADERS if header not in JSON_BLOB_FIELDS}
         print("Sample ETL row:", json.dumps(sample, ensure_ascii=False))
+    print(f"[{args.store}] Step 5/6 completed: etl_rows={len(records)}.")
 
     if args.dry_run:
         print("Dry run enabled; skipping MaybeAI sheet write.")
+        print(f"[{args.store}] Store completed: dry_run=true, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, etl_rows={len(records)}.")
         return
     if not records:
         print("No fresh SHEIN daily traffic rows; skipping MaybeAI sheet merge/write.")
+        print(f"[{args.store}] Store completed: no fresh ETL rows, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}.")
         return
     assert client is not None and target is not None
+    print(f"[{args.store}] Step 6/6: writing ETL sheet.")
     ensure_headers(args, client, target)
     merged_records = records if args.clear_worksheet_data else merge_records_by_unique_key(existing_records, records)
     merged_records = sort_records(merged_records)
@@ -1651,6 +1779,10 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     write_sheet_records(client, target, display_records, args)
     display_fresh_records = filter_records_for_sheet_display(records, requested_days, args.sheet_display_days)
     verify_written_days(client, target, args, display_records, days_with_etl_records(display_fresh_records, args.store, missing_days))
+    print(
+        f"[{args.store}] Store completed: fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, "
+        f"adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(display_records)}."
+    )
 
 
 def run_self_test() -> int:
@@ -1697,7 +1829,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
     parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at --end-date. Raw DB saves still use the requested date range.")
     parser.add_argument("--clear-worksheet-data", action="store_true", help="Discard existing data rows before writing fetched rows. Headers are preserved.")
-    parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when any existing row matches 店铺 + 日期. Default: true")
+    parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when the raw DB worksheet already has a snapshot for that date. Default: true")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")
     parser.add_argument("--profile", help="OpenCLI Browser Bridge profile alias/id. Use one dedicated profile per store.")
     parser.add_argument("--store-config", help="JSON file with multiple store/profile/sheet configs. When set, stores are synced sequentially.")
@@ -1741,6 +1873,7 @@ def main() -> int:
                 scoped_args = args_for_store_config(args, config)
                 print(f"=== configured store {index}/{len(configs)}: store={scoped_args.store}, profile={scoped_args.profile} ===")
                 run_sync(scoped_args, repo_root)
+                print(f"=== configured store completed {progress_label(index, len(configs))}: store={scoped_args.store} ===")
         else:
             run_sync(args, repo_root)
         return 0

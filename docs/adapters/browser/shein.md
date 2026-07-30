@@ -368,7 +368,7 @@ Important options:
 | `--page-size <n>` | Forwarded to `opencli shein daily-traffic --pageSize`. |
 | `--limit <n>` | Optional bounded test limit per fetched day. |
 | `--max-pages <n>` | Optional bounded page count per fetched day. |
-| `--skip-existing-days` / `--no-skip-existing-days` | Default true. If any row exists for the same `店铺 + 日期`, the whole day is skipped before running the SHEIN fetch. |
+| `--skip-existing-days` / `--no-skip-existing-days` | Default true. A day is skipped only when the raw DB worksheet already has a snapshot for that `data_date`; target ETL Sheet rows do not decide whether to crawl. |
 | `--clear-worksheet-data` | Discard existing data rows before writing fetched rows, while preserving headers. Off by default. |
 | `--ensure-headers` | Rewrite the header row before writing. Off by default. |
 | `--dry-run` | Fetch with OpenCLI, run ETL, print summary/sample, and skip MaybeAI writes. |
@@ -436,6 +436,8 @@ Skip key:
 Daily traffic Sheet output intentionally omits `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data can be saved with `--raw-db`; by default the staging workbook is `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0` and the staging worksheet is `<store>每日流量`, for example `店3每日流量`. Later ETL can read a date range with `--etl-source raw-api --raw-db-read-path <path>`.
 
 Existing ETL worksheet reads first call `/api/v1/excel_v2/worksheet/dimensions` to get the used row count, then read row ranges instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.
+
+Daily traffic sync logs include stage and progress markers for production monitoring. In a multi-store run, the script prints the configured store index, store/profile, raw-DB-based date plan, per-day fetch progress, per-day raw DB save progress, ETL/write stages, and a final store completion summary.
 
 ## Troubleshooting
 

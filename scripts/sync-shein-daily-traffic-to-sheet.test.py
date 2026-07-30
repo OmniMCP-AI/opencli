@@ -87,6 +87,10 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(sync.SyncError, "--last-days cannot be combined with --start-date"):
             sync.resolve_requested_days(args)
 
+    def test_formats_progress_label(self) -> None:
+        self.assertEqual(sync.progress_label(3, 26), "3/26 (11.5%)")
+        self.assertEqual(sync.progress_label(0, 0), "0/0")
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",
@@ -363,6 +367,34 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             {"站点": "SHEIN", "店铺": "店3", "日期": "2026-07-28", "商品": "Rack", "商品货号": "skc-1", "主商品货号": "spu-1"},
             {"date": "2026-07-29", "goods_name": "Cart", "skc": "skc-2", "spu": "spu-2"},
         ])
+
+    def test_extracts_raw_snapshot_days_including_empty_snapshots(self) -> None:
+        response = {
+            "result": {
+                "snapshots": [
+                    {"data_date": "2026-07-27", "headers": ["date", "skc"], "rows": []},
+                    {"data_date": "2026-07-28", "headers": ["date", "skc"], "rows": [["2026-07-28", "skc-1"]]},
+                ],
+            },
+        }
+
+        self.assertEqual(sync.extract_raw_snapshot_days(response), {"2026-07-27", "2026-07-28"})
+
+    def test_missing_days_are_based_on_raw_db_snapshot_days_not_target_sheet_rows(self) -> None:
+        target_sheet_records = [
+            {"店铺": "店1", "日期": "2026-07-27", "商品货号": "from-etl-sheet"},
+        ]
+        raw_snapshot_days = {"2026-07-28"}
+
+        missing, skipped = sync.compute_missing_days_from_existing_days(
+            ["2026-07-27", "2026-07-28"],
+            raw_snapshot_days,
+            True,
+        )
+
+        self.assertTrue(target_sheet_records)
+        self.assertEqual(missing, ["2026-07-27"])
+        self.assertEqual(skipped, ["2026-07-28"])
 
     def test_rows_to_records_accepts_legacy_sheet_records(self) -> None:
         records = sync.rows_to_records([

@@ -20,7 +20,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 - 默认目标表：`https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=0`
 - 默认店铺名：`普通店铺`
 - 日期规则：未传日期时默认昨天；只传 `start_date` 或 `end_date` 时另一个取同一天；`start_date > end_date` 时交换顺序；内部按天展开，逐日调用爬虫。
-- 写表规则：默认不清表；先读目标表，已存在某个 `店铺 + 日期` 的行则跳过该天；没有数据时抓取并追加；写完后读表校验目标日期可见。
+- 写表规则：默认不清表；是否需要重新爬取由 raw DB snapshot 决定，不由目标 ETL Sheet 决定。raw DB 已存在某个店铺日期的原始快照时跳过爬虫；目标 ETL Sheet 只用于 merge/write 时保留其他已有行。写完后读表校验目标日期可见。
 - 店铺/profile 规则：一个店铺绑定一个 Chrome Browser Bridge profile。脚本既支持一次只处理一个 `--store` + `--profile` 组合，也支持通过 `--store-config` 在同一次业务脚本运行里顺序处理多个店铺。每个店铺仍必须使用独立 profile，不能共享同一个已登录 Chrome profile。
 - 数据边界：SHEIN 原始数据已经由 DB 保存；业务脚本只负责从 OpenCLI/原始数据结果做 ETL 并写 MaybeAI Sheet，不再往 Sheet 或本地文件里冗余写 JSON 字段。
 
@@ -195,7 +195,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--area-cd`, `--country-site`, `--page-size`, `--limit`, `--max-pages`: forwarded to `opencli shein daily-traffic`.
 - `--request-timeout`, `--api-retry-attempts`, `--api-retry-delay-ms`, `--opencli-timeout`: forwarded to OpenCLI.
 - `--attempts`, `--retry-delay-seconds`, `--login-on-retry`, `--cli-timeout`, `--login-timeout`, `--login-wait-seconds`, `--preflight-login`: same behavior as existing SHEIN scripts.
-- `--skip-existing-days` / `--no-skip-existing-days`: default true, matching play-be behavior.
+- `--skip-existing-days` / `--no-skip-existing-days`: default true. When enabled, skip OpenCLI crawling only when the configured raw DB worksheet already has a snapshot for that date. Target ETL Sheet rows must not decide crawl skipping.
 - `--clear-worksheet-data`: default false; when true, clear data rows while preserving headers before writing fresh rows.
 - `--ensure-headers`: rewrite header row before writing.
 - `--raw-db`: default false. When true, after each successful daily CLI crawl, write the fetched rows into the raw staging worksheet and call `excel__save_table_worksheet_to_mongodb`.
@@ -274,7 +274,8 @@ Production config currently uses one shared ETL worksheet for all stores and sep
 ### Merge And Write Rules
 
 - Read the full worksheet by default, or `--read-range` if provided.
-- If `--skip-existing-days` is true, skip OpenCLI fetch for a date when any existing row matches the same `店铺 + 日期`. This is the default and must match play-be's current whole-day skip behavior.
+- If `--skip-existing-days` is true, read recent raw DB worksheet snapshots first and skip OpenCLI fetch only for dates that have a raw DB `data_date` snapshot. Empty raw snapshots still count as existing raw data for that date.
+- Target ETL Sheet rows are read for merge/write only; they must not make a date skip crawling.
 - Merge fetched rows with existing records by:
 
 ```text
@@ -388,7 +389,7 @@ npm run build-manifest
 - DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.
 - The sync script can write one store/day to MaybeAI Sheet using `update_data_keep_headers`.
-- Re-running the same store/day with `--skip-existing-days` performs no SHEIN fetch and exits successfully.
+- Re-running the same store/day with `--skip-existing-days` performs no SHEIN fetch only when raw DB already has that store/day snapshot, and exits successfully.
 - Re-running with `--no-skip-existing-days` merges rows by unique key instead of duplicating rows.
 - `docs/adapters/browser/shein.md` documents the command and script.
 - No hardcoded SHEIN usernames, passwords, bearer tokens, or webhook URLs are introduced.
@@ -397,7 +398,7 @@ npm run build-manifest
 
 - SHEIN may have changed the endpoint from `/sbn/new_goods/get_skc_diagnose_list`. Mitigation: the adapter's first implementation must capture the live request from the page, and tests should isolate endpoint matching in one helper.
 - The worksheet-to-MongoDB save path depends on the existing `excel__save_table_worksheet_to_mongodb` tool. Mitigation: raw DB writes are opt-in; production should keep the staging worksheet isolated per store and read/deduplicate by `data_date` when building ETL windows.
-- Existing play-be skipped whole days based on any matching row. Mitigation: keep the same default in the script, while offering `--no-skip-existing-days` for backfills or correction runs.
+- Existing play-be skipped whole days based on any matching ETL row, but this loses raw DB completeness. Mitigation: this script uses raw DB snapshots as the skip source, while offering `--no-skip-existing-days` for backfills or correction runs.
 - SHEIN sessions are fragile. Mitigation: copy the existing SHEIN script preflight login and retry behavior, and document that parallel commands against the same Browser Bridge profile are unsupported.
 
 ## Self Review

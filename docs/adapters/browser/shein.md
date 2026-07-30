@@ -2,7 +2,7 @@
 
 **Mode**: 🔐 Browser · **Primary domain**: `sso.geiwohuo.com`
 
-OpenCLI supports SHEIN seller GSP session checks, aftersales order export, product feedback export, and daily traffic product analytics through a live Chrome profile with the Browser Bridge extension enabled.
+OpenCLI supports SHEIN seller GSP session checks, aftersales order export, product feedback export, daily traffic product analytics, and activity product analytics through a live Chrome profile with the Browser Bridge extension enabled.
 
 ## Commands
 
@@ -13,6 +13,7 @@ OpenCLI supports SHEIN seller GSP session checks, aftersales order export, produ
 | `opencli shein aftersales` | Export SHEIN aftersales orders and flatten each order by goods row |
 | `opencli shein feedback` | Export SHEIN product feedback rows |
 | `opencli shein daily-traffic` | Export SHEIN daily product traffic analytics rows |
+| `opencli shein activity` | Export SHEIN activity list rows and activity product detail rows |
 
 ## Usage Examples
 
@@ -53,6 +54,13 @@ opencli --profile profile1 shein daily-traffic \
   --startDate 2026-07-26 \
   --endDate 2026-07-28 \
   --pageSize 100 \
+  -f json
+
+# Export SHEIN activity product detail rows
+opencli --profile profile1 shein activity \
+  --snapshotDate 2026-07-29 \
+  --limitActivities 5 \
+  --requestTimeout 120 \
   -f json
 ```
 
@@ -448,10 +456,114 @@ Existing ETL worksheet reads first call `/api/v1/excel_v2/worksheet/dimensions` 
 
 Daily traffic sync logs include stage and progress markers for production monitoring. In a multi-store run, the script prints the configured store index, store/profile, raw-DB-based date plan, per-day fetch progress, per-day raw DB save progress, ETL/write stages, and a final store completion summary.
 
+### Activity Export
+
+`opencli shein activity` opens:
+
+```text
+https://sso.geiwohuo.com/#/mars/tools/list
+```
+
+It captures `/mrs-api-prefix/promotion/obm/query_obm_activity_list`, preserves the page filters from the captured request body, replays activity-list pagination, then calls `/mrs-api-prefix/promotion/simple_platform/query_goods_detail` for each activity id to fetch product/SKU detail pages.
+
+### Activity Options
+
+| Option | Description |
+|--------|-------------|
+| `--snapshotDate <date>` | Raw DB snapshot date. Accepts `YYYY-MM-DD` or `YYYYMMDD`. Defaults to yesterday. |
+| `--insertStartTime <time>` | Activity list `insert_start_time`; falls back to the captured request body, then six months before `snapshotDate`. |
+| `--insertEndTime <time>` | Activity list `insert_end_time`; falls back to the captured request body, then `snapshotDate 23:59:59`. |
+| `--activityIds <ids>` | Fetch only specific activity ids. Supports comma, whitespace, JSON array, or legacy dash-separated input. |
+| `--typeId <n>` | Activity type; falls back to the captured request body, then `31`. |
+| `--system <value>` | SHEIN system; falls back to the captured request body, then `mrs`. |
+| `--timeZone <value>` | SHEIN time zone; falls back to the captured request body, then `Asia/Shanghai`. |
+| `--pageSize <n>` | List and detail page size; falls back to the captured request body, then `100`. |
+| `--limitActivities <n>` | Maximum activities to process, useful for smoke tests. |
+| `--limitRows <n>` | Maximum returned detail rows, useful for smoke tests. |
+| `--maxListPages <n>` | Maximum activity list pages. |
+| `--maxDetailPages <n>` | Maximum detail pages per activity. |
+| `--detailConcurrency <n>` | Activity detail concurrency. Defaults to `5`. |
+| `--requestDelayMinMs <n>` / `--requestDelayMaxMs <n>` | Random delay window between replayed requests. |
+| `--timeout <seconds>` | Whole command timeout. Defaults to `3600`. |
+| `--requestTimeout <seconds>` | Timeout for a single page-side API capture or request. Defaults to `60`. |
+| `--retryAttempts <n>` | Retry count for page-side API requests. Defaults to `3`. |
+| `--retryDelayMs <ms>` | Base retry delay. Defaults to `1000`. |
+
+### Activity Output Fields
+
+```text
+record_type, snapshot_date, store, profile, request_url,
+list_request_url, detail_request_url, queried_insert_start_time,
+queried_insert_end_time, queried_page_size, queried_type_id,
+queried_time_zone, queried_system, activity_total_count,
+activity_total_pages, activity_page_num, detail_total_count,
+detail_total_pages, detail_page_num, activity_id, activity_name,
+activity_status, activity_type_id, type_id, activity_type_name,
+site, country, creator, created_at, updated_at, start_time,
+end_time, terminate_time, state, store_code, supplier_id,
+source_store_name, tool_name, raw_activity_json, goods_id, skc,
+image_url, sku_supplier_no, attend_num_sum, stock_num, ivt_num,
+inventory_num, goods_product_act_price, goods_max_product_act_price,
+goods_is_effective, goods_failed_reason, goods_state, goods_is_del,
+goods_currency, goods_supply_price_new, goods_supply_price,
+goods_us_supply_price, goods_eur_supply_price, goods_uk_supply_price,
+goods_mxn_supply_price, is_sale_attribute, pricing_type, product_tag,
+sku_count, sku, sku_currency, sku_supply_price_new,
+sku_product_act_price, sku_max_product_act_price, sku_supply_price,
+sku_us_supply_price, sku_eur_supply_price, sku_uk_supply_price,
+sku_mxn_supply_price, sku_main_attr_names, sku_sale_attr_names,
+sku_attr_info_list_json, goods_country_attr_info_list_json,
+sku_info_list_json, raw_detail_json, raw_json
+```
+
+`record_type=activity_detail` and `record_type=activity_list_only` rows feed the business ETL. List-only or blank-SKC rows are preserved so the 11-column business Sheet still matches the legacy activity list output when an activity has no product detail. `record_type=empty_snapshot` rows are retained only for raw DB audit and skipped by the business Sheet projection.
+
+### Sync Activity To Sheet
+
+Script:
+
+```bash
+python3 scripts/sync-shein-activity-to-sheet.py \
+  --store-config scripts/shein-activity-prod.json \
+  --crawl-last-days 30 \
+  --sheet-display-days 30 \
+  --etl-source raw-api \
+  --raw-db \
+  --ensure-headers \
+  --request-timeout 120 \
+  --cli-timeout 3600
+```
+
+Important options mirror daily traffic:
+
+| Option | Description |
+|--------|-------------|
+| `--crawl-last-days <n>` | Crawl/check the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`. |
+| `--sheet-display-days <n>` | Final raw DB read window for Sheet ETL. The crawl skip check still uses the full crawl window. |
+| `--sheet-url <url>` | Target MaybeAI spreadsheet URL with `gid`; when passed on the CLI, its `gid` resolves the target worksheet instead of any config `worksheet_name`. |
+| `--store-config <path>` | Sequential multi-store config. The repo includes `scripts/shein-activity-prod.json` with `店1/jegkb2wv`, `店2/m3cjm28a`, and `店3/w2db43wa`. |
+| `--raw-db` | Save each freshly crawled store/day to the raw worksheet and MongoDB before fetching the next day. |
+| `--etl-source raw-api` | Read raw DB snapshots for ETL. Missing crawl-window days are crawled and saved first. |
+| `--skip-existing-days` / `--no-skip-existing-days` | Default true. A day is skipped only when raw DB already has a snapshot for that `data_date`; the target business Sheet never controls crawl skip. |
+| `--skip-sheet-write` | Crawl-only mode: fetch missing days and save raw DB, but skip final business Sheet write. Requires `--raw-db`. |
+| `--ensure-headers` | Rewrite the 11-column business header row before writing. |
+
+Activity ETL sheet headers:
+
+```text
+店铺,活动名称,活动规格,活动商品图片,活动商品skc,活动商品供方货号,活动时间,活动开始时间,活动结束时间,活动终止时间,状态
+```
+
+Raw activity data is saved in the raw DB worksheet as the adapter-shaped fields above plus `raw_db_type` and `raw_key`. The raw key format is `shein_activity:<store>:<profile>:<YYYY-MM-DD>` and is also passed to `excel__save_table_worksheet_to_mongodb`; if the save tool rejects extended key args, the script retries the legacy three-argument payload while keeping `raw_key` in the saved worksheet data. A successful 0-row crawl still writes an `empty_snapshot` marker before the MongoDB save call, so reruns can skip that store/day from raw DB. The production config uses `https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91` as the activity raw workbook.
+
+Because the legacy activity Sheet has no date column, `--etl-source raw-api` refreshes the current store's rows from the display raw snapshots and preserves other stores' rows already in the target worksheet. In a three-store config run, the final target worksheet contains the combined result for all configured stores.
+
+For explicit historical crawl windows, the raw DB planning read expands `last_n_days` enough to cover the earliest requested date through yesterday, then filters snapshots back to the requested dates. This avoids treating `--start-date 2026-07-01 --end-date 2026-07-02` as merely “recent 2 days”.
+
 ## Troubleshooting
 
 - If `opencli profile list` says the daemon is not running, open Chrome with the Browser Bridge extension enabled and retry.
 - If a Chrome profile such as `Profile 1` is needed, enable Browser Bridge in that Chrome profile first, then rename the connected OpenCLI profile id with `opencli profile rename`.
 - If `whoami` fails after `login` succeeds, the SSO login completed but the GSP subsystem session is not ready. Retry `opencli shein login` and keep the GSP aftersales page open.
-- If a list capture times out, raise `--requestTimeout`, rerun after `opencli shein login`, or reduce scope with `--limit` / `--maxPages` while debugging. Daily traffic uses the merchandise details page and `/sbn/new_goods/get_skc_diagnose_list`.
+- If a list capture times out, raise `--requestTimeout`, rerun after `opencli shein login`, or reduce scope with `--limit` / `--maxPages` while debugging. Daily traffic uses the merchandise details page and `/sbn/new_goods/get_skc_diagnose_list`; activity uses the marketing tools page and `/mrs-api-prefix/promotion/obm/query_obm_activity_list`.
 - Avoid running multiple SHEIN browser commands in parallel against the same Browser Bridge profile.

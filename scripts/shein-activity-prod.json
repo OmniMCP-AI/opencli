@@ -1,0 +1,31 @@
+{
+  "defaults": {
+    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40",
+    "worksheet_name": "活动数据ETL",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
+    "raw_db_worksheet_suffix": "活动数据",
+    "raw_db_type": "shein_activity",
+    "etl_source": "raw-api",
+    "sheet_display_days": 30
+  },
+  "stores": [
+    {
+      "key": "store1",
+      "store": "店1",
+      "profile": "jegkb2wv",
+      "raw_db_worksheet_name": "店1活动数据"
+    },
+    {
+      "key": "store2",
+      "store": "店2",
+      "profile": "m3cjm28a",
+      "raw_db_worksheet_name": "店2活动数据"
+    },
+    {
+      "key": "store3",
+      "store": "店3",
+      "profile": "w2db43wa",
+      "raw_db_worksheet_name": "店3活动数据"
+    }
+  ]
+}

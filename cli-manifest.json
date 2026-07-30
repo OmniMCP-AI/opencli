@@ -30779,6 +30779,240 @@
   },
   {
     "site": "shein",
+    "name": "activity",
+    "description": "拉取 SHEIN 活动列表和活动商品明细数据",
+    "access": "read",
+    "example": "opencli shein activity --snapshotDate 2026-07-30 --limitActivities 5 -f json",
+    "domain": "sso.geiwohuo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "snapshotDate",
+        "type": "str",
+        "required": false,
+        "help": "raw DB 快照日期，支持 YYYY-MM-DD 或 YYYYMMDD；不传则默认昨天"
+      },
+      {
+        "name": "insertStartTime",
+        "type": "str",
+        "required": false,
+        "help": "活动列表 insert_start_time；不传沿用页面请求或 snapshotDate 往前 6 个月 00:00:00"
+      },
+      {
+        "name": "insertEndTime",
+        "type": "str",
+        "required": false,
+        "help": "活动列表 insert_end_time；不传沿用页面请求或 snapshotDate 23:59:59"
+      },
+      {
+        "name": "activityIds",
+        "type": "str",
+        "required": false,
+        "help": "只抓指定活动详情；支持逗号、换行、JSON array 或 1-2-3"
+      },
+      {
+        "name": "typeId",
+        "type": "str",
+        "required": false,
+        "help": "活动类型；不传沿用页面请求或 31"
+      },
+      {
+        "name": "system",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN system；不传沿用页面请求或 mrs"
+      },
+      {
+        "name": "timeZone",
+        "type": "str",
+        "required": false,
+        "help": "SHEIN time_zone；不传沿用页面请求或 Asia/Shanghai"
+      },
+      {
+        "name": "store",
+        "type": "str",
+        "required": false,
+        "help": "可选店铺名，原样写入输出 store 字段"
+      },
+      {
+        "name": "profile",
+        "type": "str",
+        "required": false,
+        "help": "可选 profile 标记，原样写入输出 profile 字段"
+      },
+      {
+        "name": "pageSize",
+        "type": "int",
+        "required": false,
+        "help": "列表和详情接口每页数量；不传则沿用页面请求或 100"
+      },
+      {
+        "name": "limitActivities",
+        "type": "int",
+        "required": false,
+        "help": "最多处理活动数量，调试用"
+      },
+      {
+        "name": "limitRows",
+        "type": "int",
+        "required": false,
+        "help": "最多返回详情行数，调试用"
+      },
+      {
+        "name": "maxListPages",
+        "type": "int",
+        "required": false,
+        "help": "最多拉取活动列表页数，调试用"
+      },
+      {
+        "name": "maxDetailPages",
+        "type": "int",
+        "required": false,
+        "help": "每个活动最多拉取详情页数，调试用"
+      },
+      {
+        "name": "detailConcurrency",
+        "type": "int",
+        "default": 5,
+        "required": false,
+        "help": "详情阶段活动并发数"
+      },
+      {
+        "name": "requestDelayMinMs",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "请求之间最小延迟毫秒"
+      },
+      {
+        "name": "requestDelayMaxMs",
+        "type": "int",
+        "default": 500,
+        "required": false,
+        "help": "请求之间最大延迟毫秒"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 3600,
+        "required": false,
+        "help": "整条 SHEIN 活动命令总超时时间（秒）"
+      },
+      {
+        "name": "requestTimeout",
+        "type": "int",
+        "default": 60,
+        "required": false,
+        "help": "单个 SHEIN 页面 API 捕获/请求超时时间（秒）"
+      },
+      {
+        "name": "retryAttempts",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "页面 API 网络/5xx 失败重试次数"
+      },
+      {
+        "name": "retryDelayMs",
+        "type": "int",
+        "default": 1000,
+        "required": false,
+        "help": "页面 API 重试基础间隔毫秒；会按尝试次数线性递增"
+      }
+    ],
+    "columns": [
+      "record_type",
+      "snapshot_date",
+      "store",
+      "profile",
+      "request_url",
+      "list_request_url",
+      "detail_request_url",
+      "queried_insert_start_time",
+      "queried_insert_end_time",
+      "queried_page_size",
+      "queried_type_id",
+      "queried_time_zone",
+      "queried_system",
+      "activity_total_count",
+      "activity_total_pages",
+      "activity_page_num",
+      "detail_total_count",
+      "detail_total_pages",
+      "detail_page_num",
+      "activity_id",
+      "activity_name",
+      "activity_status",
+      "activity_type_id",
+      "type_id",
+      "activity_type_name",
+      "site",
+      "country",
+      "creator",
+      "created_at",
+      "updated_at",
+      "start_time",
+      "end_time",
+      "terminate_time",
+      "state",
+      "store_code",
+      "supplier_id",
+      "source_store_name",
+      "tool_name",
+      "raw_activity_json",
+      "goods_id",
+      "skc",
+      "image_url",
+      "sku_supplier_no",
+      "attend_num_sum",
+      "stock_num",
+      "ivt_num",
+      "inventory_num",
+      "goods_product_act_price",
+      "goods_max_product_act_price",
+      "goods_is_effective",
+      "goods_failed_reason",
+      "goods_state",
+      "goods_is_del",
+      "goods_currency",
+      "goods_supply_price_new",
+      "goods_supply_price",
+      "goods_us_supply_price",
+      "goods_eur_supply_price",
+      "goods_uk_supply_price",
+      "goods_mxn_supply_price",
+      "is_sale_attribute",
+      "pricing_type",
+      "product_tag",
+      "sku_count",
+      "sku",
+      "sku_currency",
+      "sku_supply_price_new",
+      "sku_product_act_price",
+      "sku_max_product_act_price",
+      "sku_supply_price",
+      "sku_us_supply_price",
+      "sku_eur_supply_price",
+      "sku_uk_supply_price",
+      "sku_mxn_supply_price",
+      "sku_main_attr_names",
+      "sku_sale_attr_names",
+      "sku_attr_info_list_json",
+      "goods_country_attr_info_list_json",
+      "sku_info_list_json",
+      "raw_detail_json",
+      "raw_json"
+    ],
+    "defaultFormat": "json",
+    "type": "js",
+    "modulePath": "shein/activity.js",
+    "sourceFile": "shein/activity.js",
+    "navigateBefore": false,
+    "defaultWindowMode": "foreground"
+  },
+  {
+    "site": "shein",
     "name": "aftersales",
     "description": "拉取 SHEIN 后台售后订单并按商品摊平",
     "access": "read",

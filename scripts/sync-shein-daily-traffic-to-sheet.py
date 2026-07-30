@@ -525,6 +525,19 @@ def resolve_date_range(start_date: Any = None, end_date: Any = None) -> list[str
     return dates
 
 
+def resolve_requested_days(args: argparse.Namespace) -> list[str]:
+    last_days = getattr(args, "last_days", None)
+    if last_days in (None, ""):
+        return resolve_date_range(args.start_date, args.end_date)
+    if getattr(args, "start_date", None):
+        raise SyncError("--last-days cannot be combined with --start-date. Use --end-date to choose the window end.")
+    days = positive_int_or_none(last_days, "--last-days")
+    assert days is not None
+    end = normalize_date_input(getattr(args, "end_date", None)) or default_yesterday()
+    start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    return resolve_date_range(start, end)
+
+
 def yyyymmdd(value: Any) -> str:
     return normalize_date_input(value).replace("-", "")
 
@@ -1399,7 +1412,7 @@ def read_existing_for_sync(args: argparse.Namespace, client: MaybeAIClient, targ
 
 
 def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
-    requested_days = resolve_date_range(args.start_date, args.end_date)
+    requested_days = resolve_requested_days(args)
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
     print(f"SHEIN daily traffic date range: {requested_days[0]} to {requested_days[-1]}")
     print(f"SHEIN daily traffic target sheet URL: {args.sheet_url}")
@@ -1475,6 +1488,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sync SHEIN daily traffic rows into a MaybeAI sheet.")
     parser.add_argument("--start-date", dest="start_date", help="Start date, YYYY-MM-DD or YYYYMMDD. Default: yesterday.")
     parser.add_argument("--end-date", dest="end_date", help="End date, YYYY-MM-DD or YYYYMMDD. Default: start-date or yesterday.")
+    parser.add_argument("--last-days", type=int, help="Run the latest N days ending at --end-date, or yesterday when --end-date is omitted. Cannot be combined with --start-date.")
     parser.add_argument("--area-cd", dest="area_cd", help="Optional SHEIN areaCd forwarded to OpenCLI.")
     parser.add_argument("--country-site", dest="country_site", help="Optional SHEIN countrySite forwarded to OpenCLI, comma-separated.")
     parser.add_argument("--page-size", dest="page_size", type=int, help="Optional SHEIN daily traffic pageSize.")

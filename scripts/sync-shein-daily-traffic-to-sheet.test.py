@@ -62,6 +62,25 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(sync.resolve_date_range("2026-07-08", None), ["2026-07-08"])
         self.assertEqual(sync.resolve_date_range(None, "2026-07-09"), ["2026-07-09"])
 
+    def test_resolves_last_days_window_from_end_date(self) -> None:
+        args = type("Args", (), {
+            "start_date": None,
+            "end_date": "2026-07-29",
+            "last_days": 3,
+        })()
+
+        self.assertEqual(sync.resolve_requested_days(args), ["2026-07-27", "2026-07-28", "2026-07-29"])
+
+    def test_last_days_rejects_start_date(self) -> None:
+        args = type("Args", (), {
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-29",
+            "last_days": 30,
+        })()
+
+        with self.assertRaisesRegex(sync.SyncError, "--last-days cannot be combined with --start-date"):
+            sync.resolve_requested_days(args)
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

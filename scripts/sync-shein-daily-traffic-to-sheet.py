@@ -1074,7 +1074,13 @@ def filter_records_for_sheet_display(records: list[dict[str, Any]], requested_da
     display_days = positive_int_or_none(sheet_display_days, "--sheet-display-days")
     if display_days is None:
         return list(records)
-    end = normalize_date_input(requested_days[-1])
+    record_days: list[str] = []
+    for record in records:
+        try:
+            record_days.append(normalize_date_input(record.get("日期")))
+        except SyncError:
+            continue
+    end = max(record_days) if record_days else normalize_date_input(requested_days[-1])
     start_dt = datetime.strptime(end, "%Y-%m-%d") - timedelta(days=display_days - 1)
     start = start_dt.strftime("%Y-%m-%d")
 

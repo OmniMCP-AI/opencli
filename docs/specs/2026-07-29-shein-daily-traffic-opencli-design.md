@@ -207,7 +207,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` and ETLs the returned raw rows instead of directly ETLing the current CLI rows.
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
 - `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
-- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the requested end date. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
+- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
 - `--store-config`: JSON config for sequential multi-store runs. Defaults can hold shared ETL/raw workbook URIs, worksheet name, and display window; store entries provide `key`, `store`, `profile`, and raw worksheet name.
 - `--store-key`: optional repeatable filter for `--store-config` keys, ids, or store names.
 - `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.

@@ -362,7 +362,7 @@ Important options:
 | `--store-config <path>` | JSON config for sequential multi-store production runs. The repo includes `scripts/shein-daily-traffic-prod.json`. |
 | `--store-key <key>` | Run only matching config keys, ids, or store names. Can be passed multiple times. |
 | `--sheet-url <url>` | Target MaybeAI spreadsheet URL with `gid`. |
-| `--sheet-display-days <n>` | Keep only the most recent `n` days visible in the ETL worksheet after merge/write. Raw DB saves still use the requested date range. |
+| `--sheet-display-days <n>` | Keep only the most recent `n` days visible in the ETL worksheet after merge/write, ending at the latest date present in merged ETL records. Raw DB saves still use the requested date range. |
 | `--area-cd <code>` | Forwarded to `opencli shein daily-traffic --areaCd`. |
 | `--country-site <value>` | Forwarded to `opencli shein daily-traffic --countrySite`. |
 | `--page-size <n>` | Forwarded to `opencli shein daily-traffic --pageSize`. |

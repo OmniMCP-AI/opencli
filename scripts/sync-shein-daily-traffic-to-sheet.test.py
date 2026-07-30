@@ -645,6 +645,26 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             ("店3", "2026-07-29", "recent-2"),
         ])
 
+    def test_sheet_display_days_uses_latest_merged_record_date_not_requested_end(self) -> None:
+        records = [
+            {"店铺": "店1", "日期": "2026-07-26", "商品货号": "backfill-end"},
+            {"店铺": "店2", "日期": "2026-07-27", "商品货号": "latest-1"},
+            {"店铺": "店1", "日期": "2026-07-28", "商品货号": "latest-2"},
+            {"店铺": "店3", "日期": "2026-07-29", "商品货号": "latest-3"},
+        ]
+
+        visible = sync.filter_records_for_sheet_display(
+            records,
+            ["2026-07-01", "2026-07-26"],
+            3,
+        )
+
+        self.assertEqual([(row["店铺"], row["日期"], row["商品货号"]) for row in visible], [
+            ("店2", "2026-07-27", "latest-1"),
+            ("店1", "2026-07-28", "latest-2"),
+            ("店3", "2026-07-29", "latest-3"),
+        ])
+
     def test_preserves_unknown_boolean_flag_values(self) -> None:
         self.assertEqual(sync.map_yes_no("待确认"), "待确认")
         self.assertEqual(sync.map_yes_no("混合"), "混合")

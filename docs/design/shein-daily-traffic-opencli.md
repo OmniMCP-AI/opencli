@@ -406,7 +406,7 @@ Script:
 Write verification:
 
 - Only fetched days with at least one ETL row are verified. A source day with zero SHEIN rows is written/saved as raw data when requested, but it is not required to appear in the ETL Sheet.
-- Full ETL Sheet reads use row ranges in chunks of 10,000 data rows: `A1:AD10001`, then `A10002:AD20001`, and so on. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets.
+- Full ETL Sheet reads first call `/api/v1/excel_v2/worksheet/dimensions` for the used row count, then read row ranges in chunks of 10,000 data rows: `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets, without probing empty ranges.
 - Verification reads back the expected written row with a one-row range such as `A4:AD4`. It does not use MaybeAI `filter_tokens`, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
 - These range reads avoid false failures when an unbounded `read_sheet` returns only a capped date-desc slice.
 

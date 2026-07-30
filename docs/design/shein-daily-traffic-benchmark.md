@@ -241,7 +241,9 @@ Run against an ETL worksheet with more than 10,000 rows, such as a 30-day multi-
 Pass:
 
 - the initial existing-row read uses explicit row ranges, starting with `A1:AD10001`;
-- additional chunks continue as `A10002:AD20001`, `A20002:AD30001`, and so on until a short chunk is returned;
+- the script calls `/api/v1/excel_v2/worksheet/dimensions` before the range reads;
+- additional chunks continue as `A10002:AD20001`, `A20002:AD30001`, and so on, capped by the dimensions row count;
+- the script does not probe ranges beyond the dimensions row count;
 - old dates beyond the first 10,000 returned rows are still available for `--skip-existing-days`;
 - no `filter_tokens` are sent to MaybeAI `read_sheet`.
 
@@ -250,6 +252,7 @@ Record:
 | Metric | Value |
 |---|---|
 | sheet rows | |
+| dimensions row count | |
 | chunk count | |
 | chunk ranges | |
 | old-date skip verified | |

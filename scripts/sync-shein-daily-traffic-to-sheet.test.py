@@ -481,8 +481,10 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             def __init__(fake_self) -> None:
                 fake_self.payloads = []
 
-            def post(fake_self, path: str, payload: dict) -> dict:
+            def post(fake_self, path: str, payload: dict, timeout: int = 300) -> dict:
                 fake_self.payloads.append(payload)
+                if path == "/api/v1/excel_v2/worksheet/dimensions":
+                    return {"data": {"row_count": 5}}
                 range_address = payload.get("range_address")
                 if range_address == "A1:AD3":
                     return {"values": self.sheet_values([
@@ -492,6 +494,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                 if range_address == "A4:AD5":
                     return {"values": self.sheet_values([
                         {"店铺": "店1", "日期": "2026-07-28", "商品货号": "row-3"},
+                        {"店铺": "店1", "日期": "2026-07-27", "商品货号": "row-4"},
                     ])[1:]}
                 self.fail(f"unexpected read range: {range_address}")
 
@@ -499,7 +502,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         sync.SHEET_READ_CHUNK_ROWS = 2
         try:
             client = FakeClient()
-            records = sync.read_sheet_records(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"})
+            records = sync.read_sheet_records(client, {"uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=3", "worksheet_name": "每日流量ETL"})
         finally:
             sync.SHEET_READ_CHUNK_ROWS = old_chunk_rows
 
@@ -507,8 +510,15 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             ("2026-07-30", "row-1"),
             ("2026-07-29", "row-2"),
             ("2026-07-28", "row-3"),
+            ("2026-07-27", "row-4"),
         ])
-        self.assertEqual([payload["range_address"] for payload in client.payloads], ["A1:AD3", "A4:AD5"])
+        self.assertEqual(client.payloads[0], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/doc?gid=3",
+            "worksheet_name": "每日流量ETL",
+            "gid": "3",
+            "sheet_id": "3",
+        })
+        self.assertEqual([payload["range_address"] for payload in client.payloads[1:]], ["A1:AD3", "A4:AD5"])
 
     def test_write_verification_reads_each_fetched_day_by_written_row_range(self) -> None:
         class FakeClient:

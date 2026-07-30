@@ -273,7 +273,7 @@ Script phases:
 7. preflight SHEIN session with `opencli shein whoami`;
 8. login and retry when auth/session failures are detected;
 9. call `opencli shein daily-traffic -f json` only for missing days;
-10. when `--raw-db` is set, write the fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb`;
+10. when `--raw-db` is set, write each successfully fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb` immediately before fetching the next day;
 11. when `--etl-source raw-api` is set, read the configured raw API for the 30-day window ending at the requested end date;
 12. ETL source rows to sheet records;
 13. merge by unique key;
@@ -290,7 +290,7 @@ Date controls:
 - With neither date, the script runs yesterday only.
 - With only one explicit date, the script runs that one date.
 - With `--last-days N`, the script runs the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--last-days` cannot be combined with `--start-date`.
-- `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write; it does not reduce which requested days are crawled or saved to raw DB.
+- `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write, ending at the latest date present in merged ETL records; it does not reduce which requested days are crawled or saved to raw DB.
 - `--skip-existing-days` uses raw DB snapshots, not target ETL Sheet rows. If raw DB has a snapshot for a store/day, the crawler is skipped for that day; if the ETL Sheet has rows but raw DB has no snapshot, the day is crawled and saved to raw DB.
 
 Store config:
@@ -338,7 +338,7 @@ MongoDB save tool payload:
 }
 ```
 
-The raw save is called once per successfully crawled store/day. The logged `raw_key` is:
+The raw save is called once per successfully crawled store/day, immediately after that day's CLI fetch succeeds. The logged `raw_key` is:
 
 ```text
 shein_daily_traffic:<store>:<profile>:<YYYY-MM-DD>

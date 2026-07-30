@@ -198,7 +198,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--skip-existing-days` / `--no-skip-existing-days`: default true. When enabled, skip OpenCLI crawling only when the configured raw DB worksheet already has a snapshot for that date. Target ETL Sheet rows must not decide crawl skipping.
 - `--clear-worksheet-data`: default false; when true, clear data rows while preserving headers before writing fresh rows.
 - `--ensure-headers`: rewrite header row before writing.
-- `--raw-db`: default false. When true, after each successful daily CLI crawl, write the fetched rows into the raw staging worksheet and call `excel__save_table_worksheet_to_mongodb`.
+- `--raw-db`: default false. When true, after each successful daily CLI crawl, immediately write the fetched rows into the raw staging worksheet and call `excel__save_table_worksheet_to_mongodb` before crawling the next day.
 - `--raw-db-save-path`: default `/api/v1/tool/function_call`.
 - `--raw-db-uri`: spreadsheet URI used by `save_table_worksheet_to_mongodb`; defaults to `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0`.
 - `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
@@ -207,7 +207,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` and ETLs the returned raw rows instead of directly ETLing the current CLI rows.
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
 - `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
-- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the requested end date. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
+- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
 - `--store-config`: JSON config for sequential multi-store runs. Defaults can hold shared ETL/raw workbook URIs, worksheet name, and display window; store entries provide `key`, `store`, `profile`, and raw worksheet name.
 - `--store-key`: optional repeatable filter for `--store-config` keys, ids, or store names.
 - `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.
@@ -384,7 +384,7 @@ npm run build-manifest
 - The adapter does not require committed credentials and does not replay raw cookies manually.
 - Adapter output includes all source scalar columns needed for the retained daily-traffic sheet fields and preserves raw payload fields for DB persistence.
 - The target sheet omits all JSON blob columns: `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`.
-- With `--raw-db`, the script writes the fetched day to the raw worksheet and calls `save_table_worksheet_to_mongodb` with `data_date`, `uri`, and `worksheet_name`.
+- With `--raw-db`, the script writes each fetched day to the raw worksheet and calls `save_table_worksheet_to_mongodb` with `data_date`, `uri`, and `worksheet_name` immediately after that day succeeds.
 - With `--etl-source raw-api`, the script calls the configured raw read API for a 30-day window and ETLs the returned raw rows.
 - DB raw records remain the source for future re-ETL; ETL-transformed Chinese sheet rows are only for MaybeAI Sheet output.
 - The sync script can dry-run, print a summary/sample, and skip MaybeAI writes.

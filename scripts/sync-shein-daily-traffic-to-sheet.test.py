@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("sync-shein-daily-traffic-to-sheet.py")
@@ -90,6 +91,29 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
     def test_formats_progress_label(self) -> None:
         self.assertEqual(sync.progress_label(3, 26), "3/26 (11.5%)")
         self.assertEqual(sync.progress_label(0, 0), "0/0")
+
+    def test_fetch_and_save_raw_rows_saves_each_day_immediately(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "raw_db": True,
+            "dry_run": False,
+            "etl_source": "fresh",
+        })()
+        saved: list[tuple[str, list[dict]]] = []
+
+        def fake_fetch(_args, _repo_root, day, _opencli):
+            if day == "2026-07-02":
+                raise sync.SyncError("second day failed")
+            return [{"date": day, "skc": f"skc-{day}"}]
+
+        with mock.patch.object(sync, "build_opencli_base", return_value=["opencli"]), \
+            mock.patch.object(sync, "ensure_shein_session"), \
+            mock.patch.object(sync, "fetch_shein_rows_for_day", side_effect=fake_fetch), \
+            mock.patch.object(sync, "save_raw_daily_rows", side_effect=lambda _args, _client, day, rows: saved.append((day, rows))):
+            with self.assertRaisesRegex(sync.SyncError, "second day failed"):
+                sync.fetch_and_save_shein_rows(args, Path("."), object(), ["2026-07-01", "2026-07-02"])
+
+        self.assertEqual(saved, [("2026-07-01", [{"date": "2026-07-01", "skc": "skc-2026-07-01"}])])
 
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
@@ -619,6 +643,26 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual([(row["店铺"], row["日期"], row["商品货号"]) for row in visible], [
             ("店1", "2026-07-28", "recent-1"),
             ("店3", "2026-07-29", "recent-2"),
+        ])
+
+    def test_sheet_display_days_uses_latest_merged_record_date_not_requested_end(self) -> None:
+        records = [
+            {"店铺": "店1", "日期": "2026-07-26", "商品货号": "backfill-end"},
+            {"店铺": "店2", "日期": "2026-07-27", "商品货号": "latest-1"},
+            {"店铺": "店1", "日期": "2026-07-28", "商品货号": "latest-2"},
+            {"店铺": "店3", "日期": "2026-07-29", "商品货号": "latest-3"},
+        ]
+
+        visible = sync.filter_records_for_sheet_display(
+            records,
+            ["2026-07-01", "2026-07-26"],
+            3,
+        )
+
+        self.assertEqual([(row["店铺"], row["日期"], row["商品货号"]) for row in visible], [
+            ("店2", "2026-07-27", "latest-1"),
+            ("店1", "2026-07-28", "latest-2"),
+            ("店3", "2026-07-29", "latest-3"),
         ])
 
     def test_preserves_unknown_boolean_flag_values(self) -> None:

@@ -407,6 +407,31 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(scoped.sheet_display_days, 14)
         self.assertEqual(args.store, "店3")
 
+    def test_command_line_sheet_display_days_overrides_store_config_default(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": "base-sheet",
+            "worksheet_name": None,
+            "raw_db_uri": "base-raw",
+            "raw_db_worksheet_name": None,
+            "sheet_display_days": 3,
+            "store_config": "stores.json",
+            "store_key": [],
+        })()
+
+        scoped = sync.args_for_store_config(args, {
+            "store": "店1",
+            "profile": "profile1",
+            "raw_db_worksheet_name": "店1每日流量",
+            "sheet_display_days": 30,
+        })
+
+        self.assertEqual(scoped.store, "店1")
+        self.assertEqual(scoped.profile, "profile1")
+        self.assertEqual(scoped.raw_db_worksheet_name, "店1每日流量")
+        self.assertEqual(scoped.sheet_display_days, 3)
+
     def test_raw_sheet_records_serialize_json_payloads(self) -> None:
         records = sync.raw_rows_to_sheet_records([
             {

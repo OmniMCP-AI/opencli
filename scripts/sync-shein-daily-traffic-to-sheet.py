@@ -260,6 +260,10 @@ STORE_CONFIG_ALLOWED_KEYS = {
     "raw_db_worksheet_name",
 }
 
+STORE_CONFIG_FILL_ONLY_KEYS = {
+    "sheet_display_days",
+}
+
 
 def normalize_store_config_mapping(raw: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
@@ -326,6 +330,9 @@ def args_for_store_config(args: argparse.Namespace, config: dict[str, Any]) -> a
     scoped = argparse.Namespace(**values)
     for key in STORE_CONFIG_ALLOWED_KEYS:
         value = config.get(key)
+        current_value = getattr(scoped, key, None)
+        if key in STORE_CONFIG_FILL_ONLY_KEYS and current_value not in (None, ""):
+            continue
         if value is not None and value != "":
             setattr(scoped, key, value)
     return scoped

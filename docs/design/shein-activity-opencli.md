@@ -96,6 +96,7 @@ Adapter 责任：
 - 做 ETL 和去重，三店合并写入同一个目标 worksheet；
 - 支持 `--skip-sheet-write` 只补 raw DB，不更新业务 Sheet；
 - 不向本地写 raw JSON 文件。
+- `--etl-source raw-api` 写业务 Sheet 时刷新当前店铺 rows 并保留其他店铺 rows；legacy 活动表没有日期列，不能像每日流量一样按 `日期` 过滤当前店铺旧行。
 
 MaybeAI Sheet 责任：
 
@@ -233,7 +234,7 @@ POST /mrs-api-prefix/promotion/simple_platform/query_goods_detail
 5. headers 保留 SHEIN 业务/风控 headers，丢弃 browser-managed 或敏感 headers：`accept-encoding`、`connection`、`content-length`、`cookie`、`host`、`origin`、`referer`、`user-agent`、`priority`、`sec-*`、`proxy-*`。详情 API 若需要 `origin-url`、`x-bbl-route`、`x-req-zone-id`、`x-req-sso-zone-id`，由 adapter 按当前 activity route 构造。
 6. 分页直到空页、短页、total count、`maxDetailPages` 或 `limitRows`。
 
-输出 rows 以活动商品详情为主：每个 detail goods/SKU row 生成一行，并携带对应列表 raw row；如果活动列表有活动但详情为空，允许生成 `record_type=activity_list_only` 的 raw snapshot 行供 DB 审计，ETL 默认不写缺少 `活动商品skc` 的业务行。
+输出 rows 以活动商品详情为主：每个 detail goods/SKU row 生成一行，并携带对应列表 raw row；如果活动列表有活动但详情为空，生成 `record_type=activity_list_only` 的 raw snapshot 行，并在 ETL 中保留为空商品字段的业务行，以对齐 legacy play-be 活动产物。
 
 输出 columns 建议：
 
@@ -296,7 +297,7 @@ raw_json
 | `--raw-db` | 启用 raw worksheet 写入和 MongoDB save。 |
 | `--etl-source fresh|raw-api` | 推荐生产使用 `raw-api`。 |
 | `--skip-existing-days` / `--no-skip-existing-days` | 默认启用；只依据 raw DB snapshot。 |
-| `--skip-sheet-write` | 只补爬/补 DB，不读写业务 Sheet。 |
+| `--skip-sheet-write` | 只补爬/补 DB，不读写业务 Sheet；必须同时启用 `--raw-db`，避免只爬不保存。 |
 | `--ensure-headers` | 写入前确保 legacy header。 |
 | `--clear-worksheet-data` | 可选清空数据行但保留 header；生产默认 false。 |
 | `--dry-run` | 拉取/ETL 汇总但不写 Sheet、不 save raw DB。 |
@@ -307,6 +308,7 @@ raw_json
 - display window 用于读取 raw DB snapshot、ETL、写业务 Sheet；
 - 两者必须分离。例如 `--crawl-last-days 60 --sheet-display-days 30` 表示检查 60 天 DB 缺口，但只用最近 30 天 raw snapshot 重算当前展示 Sheet。
 - 活动 Sheet 本身没有 `日期` 列；display window 的日期是 raw snapshot `data_date`，不是活动开始时间或结束时间过滤器。
+- 显式历史 crawl window 的 raw DB planning read 会把 `last_n_days` 扩展到覆盖最早请求日期到昨天，再过滤回请求日期，避免补历史两天时只读“最近两天”。
 
 核心流程：
 
@@ -369,6 +371,16 @@ Skip key：
 - Sheet 层：`店铺 + 活动名称 + 活动开始时间 + 活动商品skc + 活动商品供方货号`；
 - 若 live response 能稳定提供 `activity_id`，业务脚本内部应优先用 `activity_id + skc + sku_supplier_no` 去重，再映射成 11 列。
 
+raw-api 写表策略：
+
+- crawl planning 读取 crawl window 对应 raw DB snapshot days，缺失 store/day 才爬。
+- display 阶段读取 `--sheet-display-days` 对应 raw DB snapshots 后 ETL。
+- 当前店铺旧业务行由 display raw snapshots 重新生成并替换。
+- 若当前店 display window ETL 为 0 行，也要写回目标 Sheet：清掉当前店旧业务行，保留其他店铺行。
+- 其他店铺在同一目标 worksheet 里的业务行会保留，三店顺序执行后得到合并表。
+- raw staging worksheet 每行写入 `raw_db_type` 和 `raw_key`，key 格式为 `shein_activity:<store>:<profile>:<YYYY-MM-DD>`；MongoDB save payload 同步传入该 key。
+- 成功但无活动商品详情的日期写 `record_type=empty_snapshot` 到 raw staging worksheet，再调用 MongoDB save tool，避免下次重复爬同一天。
+
 ## Sheet ETL
 
 目标 header：
@@ -418,7 +430,7 @@ Skip key：
 {
   "defaults": {
     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40",
-    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/<raw-workbook>?gid=0",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
     "worksheet_name": "活动数据",
     "sheet_display_days": 30
   },

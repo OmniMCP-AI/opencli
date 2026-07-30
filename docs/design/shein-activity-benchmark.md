@@ -108,6 +108,12 @@ python3 scripts/sync-shein-activity-to-sheet.py \
   --skip-sheet-write
 ```
 
+Production raw workbook:
+
+```text
+https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91
+```
+
 ## Unit Gates
 
 Adapter：
@@ -120,7 +126,8 @@ npm run test:adapter -- clis/shein/activity.test.js clis/shein/daily-traffic.tes
 Script：
 
 ```bash
-python3 -m unittest scripts/sync-shein-activity-to-sheet.test.py
+python3 scripts/sync-shein-activity-to-sheet.test.py
+python3 scripts/sync-shein-activity-to-sheet.py --self-test
 ```
 
 Manifest：
@@ -204,7 +211,7 @@ Pass：
 - `活动规格` 映射 `31/1/2/9/21`；
 - `状态` 映射 `3/4/6`；
 - `活动时间` 由开始/结束时间生成；
-- 空详情时不会生成缺少 `活动商品skc` 的无效业务行，除非 legacy play-be live 对照证明需要保留。
+- 空详情或空 `活动商品skc` 时仍保留活动业务行，商品字段为空，以对齐 legacy play-be live 产物。
 
 ## 幂等验收
 
@@ -218,8 +225,9 @@ Pass：
 - 当天爬完立即写 raw staging worksheet；
 - 随后立即调用 `excel__save_table_worksheet_to_mongodb`；
 - save payload 包含 `data_date`、`uri`、`worksheet_name`；
-- 0 row snapshot 也保存成功；
+- 0 row snapshot 也保存成功，并在 raw staging worksheet 写入 `record_type=empty_snapshot`；
 - 本地没有生成 raw JSON 文件。
+- `--skip-sheet-write` 未同时传 `--raw-db` 时应 fail fast，避免只爬不保存。
 
 Record：
 

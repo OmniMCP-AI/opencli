@@ -117,7 +117,7 @@ opencli --profile jegkb2wv shein activity \
 - 详情阶段按 `activity_id + page_num/page_size` 分页，输出商品/SKU 级 raw-shaped 字段和 `raw_json`。
 - 最终 JSON 输出以活动商品详情行为主：
   - `record_type=activity_detail`：每个 detail goods/SKU row 一行，并携带对应列表 raw row。
-  - `record_type=activity_list_only`：活动列表有活动但详情为空时保留一行 raw snapshot，默认不进入业务 Sheet ETL。
+  - `record_type=activity_list_only`：活动列表有活动但详情为空时保留一行 raw snapshot，并进入业务 Sheet ETL，商品字段留空。
 
 推荐通用参数：
 
@@ -178,7 +178,7 @@ python3 scripts/sync-shein-activity-to-sheet.py \
 - `--sheet-display-days <n>`：display window，最终只读取/展示最近 N 天 raw snapshot。
 - `--raw-read-days <n>`：覆盖最终 raw DB 读取窗口。
 - `--skip-existing-days` / `--no-skip-existing-days`：默认 true；只看 raw DB。
-- `--skip-sheet-write`：只爬取并保存 raw DB，不写目标 Sheet。
+- `--skip-sheet-write`：只爬取并保存 raw DB，不写目标 Sheet；必须同时启用 `--raw-db`，避免只爬不保存。
 - `--dry-run`：允许跑 ETL summary/sample，不写 raw DB 和业务 Sheet。
 - `--raw-db-uri`、`--raw-db-worksheet-name`、`--raw-db-worksheet-suffix`、`--raw-db-type`、`--raw-db-save-path`、`--raw-db-read-path`：沿用每日流量业务脚本模型。
 - `--opencli-cmd`、`--request-timeout`、`--api-retry-attempts`、`--api-retry-delay-ms`、`--opencli-timeout`、`--attempts`、`--retry-delay-seconds`、`--login-on-retry`、`--preflight-login`、`--login-timeout`、`--login-wait-seconds`：沿用每日流量脚本。
@@ -190,7 +190,7 @@ python3 scripts/sync-shein-activity-to-sheet.py \
 {
   "defaults": {
     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/<target-doc>?gid=<activity-gid>",
-    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/<raw-doc>?gid=<raw-gid>",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
     "worksheet_name": "活动数据ETL",
     "sheet_display_days": 30
   },
@@ -225,6 +225,8 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 - raw DB 没有该日快照则运行 OpenCLI 爬取该日。
 - 每天 OpenCLI 成功后立即保存 raw DB；不得等所有日期爬完再批量保存。
 - 即使当天活动列表为空，也要保存空 raw snapshot，避免同一天反复爬取。
+- raw staging worksheet 和 MongoDB save payload 都应包含 `raw_key=shein_activity:<store>:<profile>:<YYYY-MM-DD>` 与 `raw_db_type=shein_activity`。
+- 空 raw snapshot 应在 raw staging worksheet 写入 `record_type=empty_snapshot`、`snapshot_date`、`store`、`profile`、`raw_key` 后再调用 MongoDB save tool。
 - raw staging worksheet 表头应覆盖 activity list 和 detail 的 raw 字段，并至少包含：
   - `record_type`
   - `snapshot_date`
@@ -252,6 +254,7 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 读取策略：
 
 - crawl planning 读取完整 crawl window 的 raw snapshot days。
+- 对显式历史 crawl window，planning read 的 `last_n_days` 需要覆盖最早请求日期到昨天，再过滤回请求日期，不能只传请求天数。
 - display 写表前一次性读取 display window 的 raw DB 快照。
 - 示例：`--crawl-last-days 60 --sheet-display-days 30` 应先检查 60 天 raw DB 缺失日期，只爬缺失日期；写表时读取最近 30 天 raw DB，ETL 后把 3 个店合并写入目标 Sheet。
 
@@ -261,6 +264,7 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 
 - URL 必须通过 `--sheet-url` 配置。
 - `gid` 决定 worksheet；不可硬编码 gid 40 到脚本行为里。
+- 若命令行显式传入 `--sheet-url`，即使 store config 有默认 `worksheet_name`，也应按命令行 URL 的 `gid` 解析目标 worksheet。
 - 可保留 play-be 默认 `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40` 作为示例，不作为生产强制值。
 
 写入规则：
@@ -270,6 +274,8 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 - 支持 `--ensure-headers` 重写 header row。
 - 支持 `--clear-worksheet-data`，但默认不应依赖“店1先清表、店2/店3追加”的旧调度语义。
 - 默认按唯一键 merge，避免重复行。
+- 由于 legacy 活动表没有日期列，`--etl-source raw-api` 写表时应刷新当前店铺业务行并保留其他店铺业务行；三店顺序执行后目标 worksheet 是三店合并结果。
+- 当前店 display window ETL 为 0 行时也必须写回目标 Sheet，清除当前店旧行并保留其他店铺行。
 - 推荐业务唯一键：
 
 ```text

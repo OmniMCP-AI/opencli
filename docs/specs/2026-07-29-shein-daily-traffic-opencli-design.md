@@ -21,7 +21,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 - 默认店铺名：`普通店铺`
 - 日期规则：未传日期时默认昨天；只传 `start_date` 或 `end_date` 时另一个取同一天；`start_date > end_date` 时交换顺序；内部按天展开，逐日调用爬虫。
 - 写表规则：默认不清表；先读目标表，已存在某个 `店铺 + 日期` 的行则跳过该天；没有数据时抓取并追加；写完后读表校验目标日期可见。
-- 店铺/profile 规则：一个店铺绑定一个 Chrome Browser Bridge profile。脚本一次只处理一个 `--store` + `--profile` 组合，多店铺调度由外层 cron/编排脚本逐店调用。
+- 店铺/profile 规则：一个店铺绑定一个 Chrome Browser Bridge profile。脚本既支持一次只处理一个 `--store` + `--profile` 组合，也支持通过 `--store-config` 在同一次业务脚本运行里顺序处理多个店铺。每个店铺仍必须使用独立 profile，不能共享同一个已登录 Chrome profile。
 - 数据边界：SHEIN 原始数据已经由 DB 保存；业务脚本只负责从 OpenCLI/原始数据结果做 ETL 并写 MaybeAI Sheet，不再往 Sheet 或本地文件里冗余写 JSON 字段。
 
 另外，旧项目 `/Users/duke/projects/opencli 2/src/clis/custom/listSKCsFromSHEIN.ts` 给出了隐藏 task 的可疑核心 endpoint：
@@ -31,7 +31,7 @@ play-be 当前接口的关键行为来自 `/Users/duke/projects/maybeai-uni/fast
 - 返回数据位置：`payload.info.data`
 - 总数位置：`payload.info.meta.count`
 
-该 endpoint 仍需在当前 opencli 环境中用真实 SHEIN session 验证一次，验证方式是用 `opencli browser analyze` 或新增 adapter 的首轮 capture 日志确认当前页面仍调用同一路径。
+该 endpoint 已在当前 opencli 环境中用真实 SHEIN session 验证；live run 能通过 `/sbn/new_goods/get_skc_diagnose_list` 分页返回 400+ 行/日。注意 2026-07-29 曾返回 0 行，这应按 SHEIN 源站数据为空处理，不能在写后验证里要求该天一定有 ETL 行。
 
 ## Recommended Approach
 
@@ -180,6 +180,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 
 - `--start-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
 - `--end-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
+- `--last-days <n>`: run the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`.
 - Date resolution:
   - neither `--start-date` nor `--end-date`: use yesterday for both.
   - only `--start-date`: use it for both start and end.
@@ -206,6 +207,9 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` and ETLs the returned raw rows instead of directly ETLing the current CLI rows.
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
 - `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
+- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the requested end date. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
+- `--store-config`: JSON config for sequential multi-store runs. Defaults can hold shared ETL/raw workbook URIs, worksheet name, and display window; store entries provide `key`, `store`, `profile`, and raw worksheet name.
+- `--store-key`: optional repeatable filter for `--store-config` keys, ids, or store names.
 - `--dry-run`: fetch, run ETL, print a summary/sample, and skip MaybeAI write.
 - `--env-file`: load one or more env files before reading tokens.
 - `--log-dir`: default `artifacts/shein-daily-traffic/logs`.
@@ -226,7 +230,7 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `店铺`: `--store`
 - `日期`: adapter `date`, formatted `YYYY-MM-DD`
 - `商品`: `goods_name`
-- `商品当前状态`: map `sale_flag` with `1 -> 在售`, `0 -> 下架`; preserve other values as-is.
+- `商品当前状态`: map `sale_flag` with `1 -> 在售`, `0 -> 非在售`; preserve explicit source text such as `下架` as-is.
 - `商品货号`: `skc`
 - `主商品货号`: `spu`
 - `商品访客（访问）`: `goods_uv_idx`
@@ -249,6 +253,24 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 
 The final ETL sheet headers must match the legacy SHEIN daily traffic worksheet at `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41`. Raw source data lives in the configured raw DB/API path; future re-ETL should read those raw records instead of relying on JSON serialized into MaybeAI Sheet cells.
 
+Production config currently uses one shared ETL worksheet for all stores and separate raw worksheets per store:
+
+```json
+{
+  "defaults": {
+    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c370e55e966f026e1d8",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c410e55e966f026e1e5",
+    "worksheet_name": "每日流量ETL",
+    "sheet_display_days": 30
+  },
+  "stores": [
+    {"key": "store1", "store": "店1", "profile": "jegkb2wv", "raw_db_worksheet_name": "店1每日流量"},
+    {"key": "store2", "store": "店2", "profile": "m3cjm28a", "raw_db_worksheet_name": "店2每日流量"},
+    {"key": "store3", "store": "店3", "profile": "w2db43wa", "raw_db_worksheet_name": "店3每日流量"}
+  ]
+}
+```
+
 ### Merge And Write Rules
 
 - Read the full worksheet by default, or `--read-range` if provided.
@@ -263,7 +285,9 @@ The final ETL sheet headers must match the legacy SHEIN daily traffic worksheet 
 - Sort output by `日期` descending, then `商品货号` ascending.
 - Write with `/api/v1/excel/update_data_keep_headers`, `preserve_formulas=True`, `skip_recalculation=False`, `start_row=2`.
 - When `--clear-worksheet-data` is true, discard existing data rows before writing fresh rows, but still write via `update_data_keep_headers` so headers remain.
-- After a successful write, read the sheet again and verify each fetched day has at least one `店铺 + 日期` row visible. Treat verification failure as exit code `1`.
+- Read the full ETL worksheet by row ranges instead of an unbounded `read_sheet` request. The default chunk is 10,000 data rows: first read `A1:AD10001` with headers, then read `A10002:AD20001`, `A20002:AD30001`, and so on with the fixed ETL headers. This avoids MaybeAI's unbounded read cap and keeps skip/merge correct for 30-day multi-store worksheets.
+- After a successful write, verify only fetched days that produced ETL rows. Verification should compute the written row number from the sorted `display_records` and read back a one-row range such as `A4:AD4`. Do not use MaybeAI `filter_tokens` for this path, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
+- If `--sheet-display-days` hides a freshly fetched day outside the display window, that day should be excluded from write visibility verification.
 
 ## Raw Data And ETL Boundary
 

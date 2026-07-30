@@ -43,6 +43,7 @@ DEFAULT_RAW_DB_READ_TOOL_NAME = "read_recent_worksheet_snapshots"
 DEFAULT_RAW_DB_URI = "https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0"
 DEFAULT_RAW_DB_WORKSHEET_SUFFIX = "每日流量"
 DEFAULT_RAW_READ_DAYS = 30
+SHEET_READ_CHUNK_ROWS = 10000
 
 RAW_SHEET_HEADERS = [
     "date",
@@ -916,17 +917,22 @@ def sheet_row_to_record(row: dict[str, Any], store: str) -> dict[str, Any]:
     return record
 
 
-def records_from_sheet_values(values: Any) -> list[dict[str, Any]]:
+def records_from_sheet_values(values: Any, headers: list[str] | None = None) -> list[dict[str, Any]]:
     if not isinstance(values, list) or not values:
         return []
-    raw_headers = values[0]
-    if not isinstance(raw_headers, list):
-        return []
-    headers = [str(header or "").strip() for header in raw_headers]
-    index_by_header = {header: index for index, header in enumerate(headers) if header}
+    if headers is None:
+        raw_headers = values[0]
+        if not isinstance(raw_headers, list):
+            return []
+        normalized_headers = [str(header or "").strip() for header in raw_headers]
+        raw_rows = values[1:]
+    else:
+        normalized_headers = [str(header or "").strip() for header in headers]
+        raw_rows = values
+    index_by_header = {header: index for index, header in enumerate(normalized_headers) if header}
 
     records: list[dict[str, Any]] = []
-    for raw_row in values[1:]:
+    for raw_row in raw_rows:
         if not isinstance(raw_row, list):
             continue
         record = {}
@@ -1348,19 +1354,27 @@ def read_sheet_records(
     client: MaybeAIClient,
     target: dict[str, Any],
     read_range: str | None = None,
-    filter_tokens: list[str] | None = None,
+    value_headers: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if not read_range and value_headers is None:
+        return read_sheet_records_in_ranges(client, target)
+    return read_sheet_records_once(client, target, read_range, value_headers)
+
+
+def read_sheet_records_once(
+    client: MaybeAIClient,
+    target: dict[str, Any],
+    read_range: str | None = None,
+    value_headers: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     read_payload = {**target}
     if read_range:
         read_payload["range_address"] = read_range
-    if filter_tokens:
-        read_payload["filter_tokens"] = filter_tokens
-    filter_label = f" with filters {filter_tokens}" if filter_tokens else ""
-    print(f"Reading existing rows from {read_range or 'entire worksheet'}{filter_label}...")
+    print(f"Reading existing rows from {read_range or 'entire worksheet'}...")
     read_result = client.post("/api/v1/excel/read_sheet", read_payload)
     if read_result.get("success") is False:
         raise SyncError(f"MaybeAI read_sheet did not succeed:\n{json.dumps(read_result, ensure_ascii=False)}")
-    existing_records = records_from_sheet_values(read_result.get("values", []))
+    existing_records = records_from_sheet_values(read_result.get("values", []), headers=value_headers)
     if existing_records:
         return existing_records
     return [
@@ -1368,6 +1382,33 @@ def read_sheet_records(
         for record in read_result.get("data", [])
         if isinstance(record, dict)
     ]
+
+
+def read_sheet_records_in_ranges(client: MaybeAIClient, target: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    start_row = 1
+    first_chunk = True
+
+    while True:
+        if first_chunk:
+            end_row = SHEET_READ_CHUNK_ROWS + 1
+            read_range = f"A1:{LAST_COLUMN}{end_row}"
+            chunk_records = read_sheet_records_once(client, target, read_range)
+        else:
+            end_row = start_row + SHEET_READ_CHUNK_ROWS - 1
+            read_range = f"A{start_row}:{LAST_COLUMN}{end_row}"
+            chunk_records = read_sheet_records_once(client, target, read_range, value_headers=SHEET_HEADERS)
+
+        records.extend(chunk_records)
+        if len(chunk_records) < SHEET_READ_CHUNK_ROWS:
+            break
+        if first_chunk:
+            start_row = SHEET_READ_CHUNK_ROWS + 2
+            first_chunk = False
+        else:
+            start_row += SHEET_READ_CHUNK_ROWS
+
+    return records
 
 
 def ensure_headers(args: argparse.Namespace, client: MaybeAIClient, target: dict[str, Any]) -> None:
@@ -1402,16 +1443,32 @@ def write_sheet_records(client: MaybeAIClient, target: dict[str, Any], records: 
     }, ensure_ascii=False))
 
 
-def verify_written_days(client: MaybeAIClient, target: dict[str, Any], args: argparse.Namespace, fetched_days: list[str]) -> None:
+def verify_written_days(
+    client: MaybeAIClient,
+    target: dict[str, Any],
+    args: argparse.Namespace,
+    written_records: list[dict[str, Any]],
+    fetched_days: list[str],
+) -> None:
     if not fetched_days:
         return
     missing = []
+    first_row_by_day: dict[str, int] = {}
+    for index, record in enumerate(written_records):
+        store, day = day_skip_key(record)
+        if store == args.store and day in fetched_days and day not in first_row_by_day:
+            first_row_by_day[day] = index + 2
     for day in fetched_days:
+        row_number = first_row_by_day.get(day)
+        if row_number is None:
+            missing.append(day)
+            continue
+        row_range = f"A{row_number}:{LAST_COLUMN}{row_number}"
         visible = read_sheet_records(
             client,
             target,
-            args.read_range,
-            filter_tokens=[f"店铺_eq_{args.store}", f"日期_eq_{day}"],
+            row_range,
+            value_headers=SHEET_HEADERS,
         )
         visible_keys = {day_skip_key(record) for record in visible}
         if (args.store, day) not in visible_keys:
@@ -1483,7 +1540,7 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         print(f"Sheet display window: last {args.sheet_display_days} day(s), rows={len(display_records)}")
     write_sheet_records(client, target, display_records, args)
     display_fresh_records = filter_records_for_sheet_display(records, requested_days, args.sheet_display_days)
-    verify_written_days(client, target, args, days_with_etl_records(display_fresh_records, args.store, missing_days))
+    verify_written_days(client, target, args, display_records, days_with_etl_records(display_fresh_records, args.store, missing_days))
 
 
 def run_self_test() -> int:

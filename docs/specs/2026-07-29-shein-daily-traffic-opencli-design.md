@@ -285,7 +285,7 @@ Production config currently uses one shared ETL worksheet for all stores and sep
 - Sort output by `日期` descending, then `商品货号` ascending.
 - Write with `/api/v1/excel/update_data_keep_headers`, `preserve_formulas=True`, `skip_recalculation=False`, `start_row=2`.
 - When `--clear-worksheet-data` is true, discard existing data rows before writing fresh rows, but still write via `update_data_keep_headers` so headers remain.
-- Read the full ETL worksheet by row ranges instead of an unbounded `read_sheet` request. The default chunk is 10,000 data rows: first read `A1:AD10001` with headers, then read `A10002:AD20001`, `A20002:AD30001`, and so on with the fixed ETL headers. This avoids MaybeAI's unbounded read cap and keeps skip/merge correct for 30-day multi-store worksheets.
+- Before reading the full ETL worksheet, call `/api/v1/excel_v2/worksheet/dimensions` to get the used row count. Then read only the needed row ranges. The default chunk is 10,000 data rows: first read `A1:AD10001` with headers, then read `A10002:AD20001`, `A20002:AD30001`, and so on with the fixed ETL headers, capped at the dimensions row count. This avoids MaybeAI's unbounded read cap and avoids probing empty ranges such as `A100002:AD110001`.
 - After a successful write, verify only fetched days that produced ETL rows. Verification should compute the written row number from the sorted `display_records` and read back a one-row range such as `A4:AD4`. Do not use MaybeAI `filter_tokens` for this path, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
 - If `--sheet-display-days` hides a freshly fetched day outside the display window, that day should be excluded from write visibility verification.
 

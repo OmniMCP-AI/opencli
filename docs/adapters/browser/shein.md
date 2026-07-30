@@ -435,7 +435,7 @@ Skip key:
 
 Daily traffic Sheet output intentionally omits `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data can be saved with `--raw-db`; by default the staging workbook is `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0` and the staging worksheet is `<store>每日流量`, for example `店3每日流量`. Later ETL can read a date range with `--etl-source raw-api --raw-db-read-path <path>`.
 
-Existing ETL worksheet reads are chunked by row range instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, and so on. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.
+Existing ETL worksheet reads first call `/api/v1/excel_v2/worksheet/dimensions` to get the used row count, then read row ranges instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.
 
 ## Troubleshooting
 

@@ -44,6 +44,7 @@ DEFAULT_RAW_DB_URI = "https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f
 DEFAULT_RAW_DB_WORKSHEET_SUFFIX = "每日流量"
 DEFAULT_RAW_READ_DAYS = 30
 SHEET_READ_CHUNK_ROWS = 10000
+WORKSHEET_DIMENSIONS_PATH = "/api/v1/excel_v2/worksheet/dimensions"
 
 RAW_SHEET_HEADERS = [
     "date",
@@ -1350,6 +1351,89 @@ def build_sheet_target(args: argparse.Namespace, client: MaybeAIClient) -> tuple
     return target, worksheet_name
 
 
+def build_worksheet_dimensions_payload(target: dict[str, Any]) -> dict[str, Any]:
+    uri = str(target.get("uri", "") or "").strip()
+    if not uri:
+        raise SyncError("Cannot read worksheet dimensions without target uri.")
+    payload: dict[str, Any] = {"uri": uri}
+    worksheet_name = str(target.get("worksheet_name", "") or "").strip()
+    if worksheet_name:
+        payload["worksheet_name"] = worksheet_name
+    _, gid = parse_sheet_url(uri)
+    if gid is not None:
+        payload["gid"] = str(gid)
+        payload["sheet_id"] = str(gid)
+    return payload
+
+
+def first_int_at_paths(data: Any, paths: list[tuple[str, ...]]) -> int | None:
+    for path in paths:
+        current = data
+        for key in path:
+            if not isinstance(current, dict) or key not in current:
+                current = None
+                break
+            current = current[key]
+        if current is None or current == "":
+            continue
+        try:
+            value = int(current)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            return value
+    return None
+
+
+def extract_worksheet_row_count(dimensions_result: dict[str, Any]) -> int:
+    row_count = first_int_at_paths(dimensions_result, [
+        ("row_count",),
+        ("rowCount",),
+        ("rows",),
+        ("used_rows",),
+        ("usedRows",),
+        ("max_row",),
+        ("maxRow",),
+        ("data", "row_count"),
+        ("data", "rowCount"),
+        ("data", "rows"),
+        ("data", "used_rows"),
+        ("data", "usedRows"),
+        ("data", "max_row"),
+        ("data", "maxRow"),
+        ("result", "row_count"),
+        ("result", "rowCount"),
+        ("result", "rows"),
+        ("result", "used_rows"),
+        ("result", "usedRows"),
+        ("result", "max_row"),
+        ("result", "maxRow"),
+        ("dimensions", "row_count"),
+        ("dimensions", "rowCount"),
+        ("dimensions", "rows"),
+        ("data", "dimensions", "row_count"),
+        ("data", "dimensions", "rowCount"),
+        ("data", "dimensions", "rows"),
+        ("result", "dimensions", "row_count"),
+        ("result", "dimensions", "rowCount"),
+        ("result", "dimensions", "rows"),
+    ])
+    if row_count is None:
+        raise SyncError(f"MaybeAI worksheet dimensions response missing row count:\n{json.dumps(dimensions_result, ensure_ascii=False)}")
+    return row_count
+
+
+def read_worksheet_row_count(client: MaybeAIClient, target: dict[str, Any]) -> int:
+    payload = build_worksheet_dimensions_payload(target)
+    print("Reading worksheet dimensions for row count...")
+    result = client.post(WORKSHEET_DIMENSIONS_PATH, payload, timeout=30)
+    if result.get("success") is False:
+        raise SyncError(f"MaybeAI worksheet dimensions did not succeed:\n{json.dumps(result, ensure_ascii=False)}")
+    row_count = extract_worksheet_row_count(result)
+    print(f"Worksheet dimensions row count: {row_count}")
+    return row_count
+
+
 def read_sheet_records(
     client: MaybeAIClient,
     target: dict[str, Any],
@@ -1385,23 +1469,25 @@ def read_sheet_records_once(
 
 
 def read_sheet_records_in_ranges(client: MaybeAIClient, target: dict[str, Any]) -> list[dict[str, Any]]:
+    total_rows = read_worksheet_row_count(client, target)
+    if total_rows <= 1:
+        return []
+
     records: list[dict[str, Any]] = []
     start_row = 1
     first_chunk = True
 
-    while True:
+    while start_row <= total_rows:
         if first_chunk:
-            end_row = SHEET_READ_CHUNK_ROWS + 1
+            end_row = min(SHEET_READ_CHUNK_ROWS + 1, total_rows)
             read_range = f"A1:{LAST_COLUMN}{end_row}"
             chunk_records = read_sheet_records_once(client, target, read_range)
         else:
-            end_row = start_row + SHEET_READ_CHUNK_ROWS - 1
+            end_row = min(start_row + SHEET_READ_CHUNK_ROWS - 1, total_rows)
             read_range = f"A{start_row}:{LAST_COLUMN}{end_row}"
             chunk_records = read_sheet_records_once(client, target, read_range, value_headers=SHEET_HEADERS)
 
         records.extend(chunk_records)
-        if len(chunk_records) < SHEET_READ_CHUNK_ROWS:
-            break
         if first_chunk:
             start_row = SHEET_READ_CHUNK_ROWS + 2
             first_chunk = False

@@ -190,6 +190,22 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(sync.raw_db_uri(args), "https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0")
 
+    def test_extracts_row_count_from_dimensions_worksheet_response(self) -> None:
+        response = {
+            "success": True,
+            "worksheets": [
+                {
+                    "worksheet_name": "每日流量ETL",
+                    "gid": 3,
+                    "dimensions": {"rows": 13337, "columns": 30},
+                    "row_count": 13337,
+                    "column_count": 30,
+                },
+            ],
+        }
+
+        self.assertEqual(sync.extract_worksheet_row_count(response), 13337)
+
     def test_builds_read_recent_worksheet_snapshots_payload(self) -> None:
         args = type("Args", (), {
             "raw_read_days": 30,

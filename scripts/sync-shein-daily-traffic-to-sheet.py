@@ -1419,6 +1419,30 @@ def extract_worksheet_row_count(dimensions_result: dict[str, Any]) -> int:
         ("result", "dimensions", "rows"),
     ])
     if row_count is None:
+        worksheets = dimensions_result.get("worksheets")
+        if isinstance(worksheets, list):
+            for worksheet in worksheets:
+                if not isinstance(worksheet, dict):
+                    continue
+                row_count = first_int_at_paths(worksheet, [
+                    ("row_count",),
+                    ("rowCount",),
+                    ("rows",),
+                    ("used_rows",),
+                    ("usedRows",),
+                    ("max_row",),
+                    ("maxRow",),
+                    ("dimensions", "row_count"),
+                    ("dimensions", "rowCount"),
+                    ("dimensions", "rows"),
+                    ("dimensions", "used_rows"),
+                    ("dimensions", "usedRows"),
+                    ("dimensions", "max_row"),
+                    ("dimensions", "maxRow"),
+                ])
+                if row_count is not None:
+                    break
+    if row_count is None:
         raise SyncError(f"MaybeAI worksheet dimensions response missing row count:\n{json.dumps(dimensions_result, ensure_ascii=False)}")
     return row_count
 

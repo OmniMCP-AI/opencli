@@ -437,6 +437,8 @@ Daily traffic Sheet output intentionally omits `每日流量明细JSON`, `活动
 
 Existing ETL worksheet reads first call `/api/v1/excel_v2/worksheet/dimensions` to get the used row count, then read row ranges instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.
 
+Daily traffic sync logs include stage and progress markers for production monitoring. In a multi-store run, the script prints the configured store index, store/profile, date plan, per-day fetch progress, per-day raw DB save progress, ETL/write stages, and a final store completion summary.
+
 ## Troubleshooting
 
 - If `opencli profile list` says the daemon is not running, open Chrome with the Browser Bridge extension enabled and retry.

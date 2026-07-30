@@ -87,6 +87,10 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(sync.SyncError, "--last-days cannot be combined with --start-date"):
             sync.resolve_requested_days(args)
 
+    def test_formats_progress_label(self) -> None:
+        self.assertEqual(sync.progress_label(3, 26), "3/26 (11.5%)")
+        self.assertEqual(sync.progress_label(0, 0), "0/0")
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

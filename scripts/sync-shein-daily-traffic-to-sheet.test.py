@@ -115,6 +115,33 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(saved, [("2026-07-01", [{"date": "2026-07-01", "skc": "skc-2026-07-01"}])])
 
+    def test_skip_sheet_write_still_fetches_without_etl_sheet_io(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": "etl-sheet",
+            "dry_run": False,
+            "skip_sheet_write": True,
+            "skip_existing_days": False,
+            "raw_db": True,
+            "etl_source": "fresh",
+            "sheet_display_days": 30,
+        })()
+
+        with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01"]), \
+            mock.patch.object(sync, "build_maybeai_client", return_value=object()) as build_client, \
+            mock.patch.object(sync, "build_sheet_target") as build_sheet_target, \
+            mock.patch.object(sync, "read_existing_for_sync") as read_existing, \
+            mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"date": "2026-07-01", "skc": "skc-1"}]) as fetch_rows, \
+            mock.patch.object(sync, "write_sheet_records") as write_records:
+            sync.run_sync(args, Path("."))
+
+        build_client.assert_called_once()
+        fetch_rows.assert_called_once()
+        build_sheet_target.assert_not_called()
+        read_existing.assert_not_called()
+        write_records.assert_not_called()
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

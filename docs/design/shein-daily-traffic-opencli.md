@@ -322,6 +322,7 @@ Raw DB options:
 - `--etl-source fresh|raw-api`: default `fresh`; `raw-api` reads raw rows back before ETL.
 - `--raw-db-read-path`: required by `--etl-source raw-api`; this repo does not assume a concrete read endpoint.
 - `--raw-read-days`: default `30`; read window ends at `--end-date`.
+- `--skip-sheet-write`: skip final ETL Sheet merge/write after fetch/ETL summary. With `--etl-source fresh --raw-db`, this is the crawl-only mode: each missing day is crawled and saved to raw DB, but the business Sheet is not touched.
 
 MongoDB save tool payload:
 

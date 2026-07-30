@@ -1001,8 +1001,16 @@ async function ensureActivityDetailPage(page, activityId) {
     throw new CommandExecutionError(`SHEIN activity detail navigation failed before detail fetch: current=${href || '<empty>'}`);
 }
 
+function isBlankPageButtonFailure(error, clickText) {
+    const message = String(error?.message || error);
+    return message.includes(`button not found: ${clickText}`) && message.includes('current=about:blank');
+}
+
+function isCaptureTimeout(error) {
+    return String(error?.message || error).includes('capture timeout');
+}
+
 async function captureFirstActivityPage(page, options) {
-    await ensureActivityPage(page);
     const captureWithClick = async (clickText) => captureRequestViaPageTap(page, {
         pattern: ACTIVITY_LIST_API_PATTERN,
         timeoutMs: options.timeoutMs,
@@ -1010,18 +1018,28 @@ async function captureFirstActivityPage(page, options) {
         clickText,
         label: 'SHEIN activity list first-page response',
     });
-    let captures;
-    try {
-        captures = await captureWithClick('创建记录');
-    } catch (error) {
-        const message = String(error?.message || error);
-        if (!message.includes('button not found: 创建记录 current=about:blank') && !message.includes('capture timeout')) throw error;
+    const attempts = parsePositiveInt(options.captureAttempts, 'activity list capture attempts', 3);
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
         await ensureActivityPage(page);
-        captures = message.includes('capture timeout')
-            ? await captureWithClick('搜索')
-            : await captureWithClick('创建记录');
+        try {
+            return extractActivityCaptureContext(await captureWithClick('创建记录'));
+        } catch (error) {
+            lastError = error;
+            if (isCaptureTimeout(error)) {
+                await ensureActivityPage(page);
+                try {
+                    return extractActivityCaptureContext(await captureWithClick('搜索'));
+                } catch (searchError) {
+                    lastError = searchError;
+                    if (!isBlankPageButtonFailure(searchError, '搜索') && !isCaptureTimeout(searchError)) throw searchError;
+                }
+            } else if (!isBlankPageButtonFailure(error, '创建记录')) {
+                throw error;
+            }
+        }
     }
-    return extractActivityCaptureContext(captures);
+    throw lastError;
 }
 
 export async function collectSheinActivityRows(page, kwargs) {

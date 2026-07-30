@@ -273,7 +273,7 @@ Script phases:
 7. preflight SHEIN session with `opencli shein whoami`;
 8. login and retry when auth/session failures are detected;
 9. call `opencli shein daily-traffic -f json` only for missing days;
-10. when `--raw-db` is set, write the fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb`;
+10. when `--raw-db` is set, write each successfully fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb` immediately before fetching the next day;
 11. when `--etl-source raw-api` is set, read the configured raw API for the 30-day window ending at the requested end date;
 12. ETL source rows to sheet records;
 13. merge by unique key;
@@ -338,7 +338,7 @@ MongoDB save tool payload:
 }
 ```
 
-The raw save is called once per successfully crawled store/day. The logged `raw_key` is:
+The raw save is called once per successfully crawled store/day, immediately after that day's CLI fetch succeeds. The logged `raw_key` is:
 
 ```text
 shein_daily_traffic:<store>:<profile>:<YYYY-MM-DD>

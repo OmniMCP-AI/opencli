@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("sync-shein-daily-traffic-to-sheet.py")
@@ -90,6 +91,29 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
     def test_formats_progress_label(self) -> None:
         self.assertEqual(sync.progress_label(3, 26), "3/26 (11.5%)")
         self.assertEqual(sync.progress_label(0, 0), "0/0")
+
+    def test_fetch_and_save_raw_rows_saves_each_day_immediately(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "raw_db": True,
+            "dry_run": False,
+            "etl_source": "fresh",
+        })()
+        saved: list[tuple[str, list[dict]]] = []
+
+        def fake_fetch(_args, _repo_root, day, _opencli):
+            if day == "2026-07-02":
+                raise sync.SyncError("second day failed")
+            return [{"date": day, "skc": f"skc-{day}"}]
+
+        with mock.patch.object(sync, "build_opencli_base", return_value=["opencli"]), \
+            mock.patch.object(sync, "ensure_shein_session"), \
+            mock.patch.object(sync, "fetch_shein_rows_for_day", side_effect=fake_fetch), \
+            mock.patch.object(sync, "save_raw_daily_rows", side_effect=lambda _args, _client, day, rows: saved.append((day, rows))):
+            with self.assertRaisesRegex(sync.SyncError, "second day failed"):
+                sync.fetch_and_save_shein_rows(args, Path("."), object(), ["2026-07-01", "2026-07-02"])
+
+        self.assertEqual(saved, [("2026-07-01", [{"date": "2026-07-01", "skc": "skc-2026-07-01"}])])
 
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({

@@ -625,6 +625,41 @@ def fetch_shein_rows(args: argparse.Namespace, repo_root: Path, missing_days: li
     return rows
 
 
+def should_save_raw_daily_rows(args: argparse.Namespace, client: Any) -> bool:
+    return bool(client is not None and args.etl_source != "raw-api" and args.raw_db and not args.dry_run)
+
+
+def fetch_and_save_shein_rows(args: argparse.Namespace, repo_root: Path, client: Any, missing_days: list[str]) -> list[dict[str, Any]]:
+    if not missing_days:
+        print(f"[{args.store}] Fetch progress: no missing days; skipping SHEIN daily traffic CLI.")
+        return []
+    opencli = build_opencli_base(args)
+    ensure_shein_session(args, repo_root, opencli)
+    rows: list[dict[str, Any]] = []
+    total = len(missing_days)
+    save_raw = should_save_raw_daily_rows(args, client)
+    print(f"[{args.store}] Fetch progress: days_to_fetch={total}, first_day={missing_days[0]}, last_day={missing_days[-1]}")
+    if save_raw:
+        print(f"[{args.store}] Raw DB progress: save immediately after each fetched day; days_to_save={total}")
+    elif args.raw_db and args.dry_run:
+        print(f"[{args.store}] Raw DB progress: dry-run enabled; skipping per-day raw DB saves.")
+    elif not args.raw_db:
+        print(f"[{args.store}] Raw DB progress: disabled; fetched rows will not be saved to DB.")
+    for index, day in enumerate(missing_days, start=1):
+        print(f"[{args.store}] Fetch started {progress_label(index, total)} day={day}")
+        day_rows = fetch_shein_rows_for_day(args, repo_root, day, opencli)
+        rows.extend(day_rows)
+        print(
+            f"[{args.store}] Fetch completed {progress_label(index, total)} "
+            f"day={day}, rows={len(day_rows)}, cumulative_rows={len(rows)}"
+        )
+        if save_raw:
+            print(f"[{args.store}] Raw DB save started {progress_label(index, total)} day={day}, rows={len(day_rows)}")
+            save_raw_daily_rows(args, client, day, day_rows)
+            print(f"[{args.store}] Raw DB save completed {progress_label(index, total)} day={day}, rows={len(day_rows)}")
+    return rows
+
+
 def normalize_cell(value: Any) -> Any:
     if value is None:
         return ""
@@ -1732,13 +1767,10 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         f"requested={len(requested_days)}, to_fetch={len(missing_days)}, skipped={len(skipped_days)}."
     )
 
-    print(f"[{args.store}] Step 3/6: fetching SHEIN daily traffic rows.")
-    fetched_rows = [] if args.etl_source == "raw-api" else fetch_shein_rows(args, repo_root, missing_days)
+    print(f"[{args.store}] Step 3/6: fetching SHEIN daily traffic rows and saving raw DB per day.")
+    fetched_rows = [] if args.etl_source == "raw-api" else fetch_and_save_shein_rows(args, repo_root, client, missing_days)
     print(f"[{args.store}] Step 3/6 completed: fetched adapter_rows={len(fetched_rows)}.")
-    print(f"[{args.store}] Step 4/6: saving raw daily rows if enabled.")
-    if client is not None and args.etl_source != "raw-api":
-        save_raw_days(args, client, missing_days, fetched_rows)
-    print(f"[{args.store}] Step 4/6 completed.")
+    print(f"[{args.store}] Step 4/6 completed: raw daily rows are saved immediately after each day fetch when enabled.")
     adapter_rows = [*existing_raw_rows, *fetched_rows]
     if args.etl_source == "raw-api":
         if client is None:

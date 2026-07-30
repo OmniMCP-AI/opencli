@@ -217,7 +217,7 @@ All scripts:
 - Write data rows with `update_data_keep_headers`, preserving the existing header row.
 - Append structured Python `logging` output to one daily log file by default.
 
-Aftersales and feedback scripts save raw CLI JSON as timestamped files. The daily traffic script does not write local raw JSON files; when `--raw-db` is provided, it writes the fetched day to the raw worksheet and calls `excel__save_table_worksheet_to_mongodb`.
+Aftersales and feedback scripts save raw CLI JSON as timestamped files. The daily traffic script does not write local raw JSON files; when `--raw-db` is provided, it writes each successfully fetched day to the raw worksheet and calls `excel__save_table_worksheet_to_mongodb` immediately before fetching the next day.
 
 ### Sync Aftersales To Sheet
 

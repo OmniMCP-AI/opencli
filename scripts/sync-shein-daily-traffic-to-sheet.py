@@ -531,12 +531,17 @@ def resolve_date_range(start_date: Any = None, end_date: Any = None) -> list[str
 
 
 def resolve_requested_days(args: argparse.Namespace) -> list[str]:
+    crawl_last_days = getattr(args, "crawl_last_days", None)
     last_days = getattr(args, "last_days", None)
+    if crawl_last_days not in (None, "") and last_days not in (None, ""):
+        raise SyncError("--crawl-last-days cannot be combined with --last-days.")
+    last_days_option = "--crawl-last-days" if crawl_last_days not in (None, "") else "--last-days"
+    last_days = crawl_last_days if crawl_last_days not in (None, "") else last_days
     if last_days in (None, ""):
         return resolve_date_range(args.start_date, args.end_date)
     if getattr(args, "start_date", None):
-        raise SyncError("--last-days cannot be combined with --start-date. Use --end-date to choose the window end.")
-    days = positive_int_or_none(last_days, "--last-days")
+        raise SyncError(f"{last_days_option} cannot be combined with --start-date. Use --end-date to choose the window end.")
+    days = positive_int_or_none(last_days, last_days_option)
     assert days is not None
     end = normalize_date_input(getattr(args, "end_date", None)) or default_yesterday()
     start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
@@ -1864,7 +1869,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sync SHEIN daily traffic rows into a MaybeAI sheet.")
     parser.add_argument("--start-date", dest="start_date", help="Start date, YYYY-MM-DD or YYYYMMDD. Default: yesterday.")
     parser.add_argument("--end-date", dest="end_date", help="End date, YYYY-MM-DD or YYYYMMDD. Default: start-date or yesterday.")
-    parser.add_argument("--last-days", type=int, help="Run the latest N days ending at --end-date, or yesterday when --end-date is omitted. Cannot be combined with --start-date.")
+    parser.add_argument("--crawl-last-days", type=int, help="Crawl/check the latest N days ending at --end-date, or yesterday when --end-date is omitted. Cannot be combined with --start-date.")
+    parser.add_argument("--last-days", type=int, help="Legacy alias for --crawl-last-days. Prefer --crawl-last-days for new commands.")
     parser.add_argument("--area-cd", dest="area_cd", help="Optional SHEIN areaCd forwarded to OpenCLI.")
     parser.add_argument("--country-site", dest="country_site", help="Optional SHEIN countrySite forwarded to OpenCLI, comma-separated.")
     parser.add_argument("--page-size", dest="page_size", type=int, help="Optional SHEIN daily traffic pageSize.")

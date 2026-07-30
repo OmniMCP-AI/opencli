@@ -180,7 +180,8 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 
 - `--start-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
 - `--end-date`: accepts `YYYY-MM-DD` or `YYYYMMDD`.
-- `--last-days <n>`: run the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`.
+- `--crawl-last-days <n>`: crawl/check the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`.
+- `--last-days <n>`: legacy alias for `--crawl-last-days`; prefer `--crawl-last-days` in new commands.
 - Date resolution:
   - neither `--start-date` nor `--end-date`: use yesterday for both.
   - only `--start-date`: use it for both start and end.

@@ -336,6 +336,36 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             },
         })
 
+    def test_raw_read_days_defaults_to_sheet_display_days(self) -> None:
+        args = type("Args", (), {
+            "raw_read_days": 30,
+            "sheet_display_days": 3,
+            "_cli_override_keys": {"sheet_display_days"},
+        })()
+
+        payload = sync.build_read_recent_worksheet_snapshots_payload(
+            args,
+            uri="https://www.maybe.ai/docs/spreadsheets/d/raw?gid=4",
+            worksheet_name="店3每日流量",
+        )
+
+        self.assertEqual(payload["tool_args"]["last_n_days"], 3)
+
+    def test_explicit_raw_read_days_overrides_sheet_display_days(self) -> None:
+        args = type("Args", (), {
+            "raw_read_days": 10,
+            "sheet_display_days": 3,
+            "_cli_override_keys": {"raw_read_days", "sheet_display_days"},
+        })()
+
+        payload = sync.build_read_recent_worksheet_snapshots_payload(
+            args,
+            uri="https://www.maybe.ai/docs/spreadsheets/d/raw?gid=4",
+            worksheet_name="店3每日流量",
+        )
+
+        self.assertEqual(payload["tool_args"]["last_n_days"], 10)
+
     def test_loads_store_config_and_applies_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "stores.json"

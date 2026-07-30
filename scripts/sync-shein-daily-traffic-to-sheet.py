@@ -268,6 +268,7 @@ STORE_CONFIG_FILL_ONLY_KEYS = {
 CLI_OVERRIDE_OPTION_DESTS = {
     "--sheet-url": "sheet_url",
     "--sheet-display-days": "sheet_display_days",
+    "--raw-read-days": "raw_read_days",
 }
 
 
@@ -1229,9 +1230,19 @@ def build_read_recent_worksheet_snapshots_payload(args: argparse.Namespace, uri:
         "tool_args": {
             "uri": uri,
             "worksheet_name": worksheet_name,
-            "last_n_days": int(getattr(args, "raw_read_days", DEFAULT_RAW_READ_DAYS) or DEFAULT_RAW_READ_DAYS),
+            "last_n_days": effective_raw_read_days(args),
         },
     }
+
+
+def effective_raw_read_days(args: argparse.Namespace) -> int:
+    cli_override_keys = set(getattr(args, "_cli_override_keys", set()) or set())
+    if "raw_read_days" not in cli_override_keys:
+        sheet_display_days = positive_int_or_none(getattr(args, "sheet_display_days", None), "--sheet-display-days")
+        if sheet_display_days is not None:
+            return sheet_display_days
+    raw_read_days = positive_int_or_none(getattr(args, "raw_read_days", DEFAULT_RAW_READ_DAYS), "--raw-read-days")
+    return raw_read_days or DEFAULT_RAW_READ_DAYS
 
 
 def group_rows_by_date(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -1421,7 +1432,7 @@ def read_raw_api_snapshot_response(args: argparse.Namespace, client: "MaybeAICli
     uri = raw_db_uri(args)
     worksheet_name = raw_db_worksheet_name(args, args.store)
     payload = build_read_recent_worksheet_snapshots_payload(args, uri=uri, worksheet_name=worksheet_name)
-    print(f"Reading raw SHEIN daily traffic worksheet snapshots: uri={uri}, worksheet={worksheet_name}, last_n_days={args.raw_read_days}")
+    print(f"Reading raw SHEIN daily traffic worksheet snapshots: uri={uri}, worksheet={worksheet_name}, last_n_days={effective_raw_read_days(args)}")
     return client.post(args.raw_db_read_path, payload)
 
 
@@ -1914,7 +1925,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-db-worksheet-name", help="Worksheet name used as the raw MongoDB staging table. Defaults to <store><raw-db-worksheet-suffix>.")
     parser.add_argument("--raw-db-worksheet-suffix", default=DEFAULT_RAW_DB_WORKSHEET_SUFFIX, help=f"Worksheet suffix used when --raw-db-worksheet-name is omitted. Default: {DEFAULT_RAW_DB_WORKSHEET_SUFFIX}")
     parser.add_argument("--raw-db-read-path", default=DEFAULT_RAW_DB_READ_PATH, help=f"MaybeAI function_call API path used by --etl-source raw-api to load recent raw worksheet snapshots. Default: {DEFAULT_RAW_DB_READ_PATH}")
-    parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Days to request from the raw API ending at --end-date. Default: {DEFAULT_RAW_READ_DAYS}")
+    parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Days to request from the raw API ending at --end-date. Defaults to --sheet-display-days when set, otherwise {DEFAULT_RAW_READ_DAYS}.")
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh", help="Use freshly crawled CLI rows or rows loaded back from the raw API for Sheet ETL. Default: fresh")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
     parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at the latest date present in merged ETL records. Raw DB saves still use the requested date range.")

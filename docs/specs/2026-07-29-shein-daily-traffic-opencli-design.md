@@ -205,10 +205,10 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
 - `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
 - `--raw-db-worksheet-suffix`: default `每日流量`, matching the staging worksheet pattern such as `店3每日流量`.
 - `--raw-db-type`: default `shein_daily_traffic`, used by the later raw read API query.
-- `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path`, crawls and saves any requested days missing from raw DB, then ETLs the combined raw DB rows plus fresh rows.
+- `--etl-source fresh|raw-api`: default `fresh`. `raw-api` calls `--raw-db-read-path` for the full requested crawl window, crawls and saves any requested days missing from raw DB, then reads the Sheet display window from raw DB for ETL.
 - `--raw-db-read-path`: required when `--etl-source raw-api`.
-- `--raw-read-days`: default 30; the raw API query window ends at the requested end date.
-- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB saves still use the full requested date range.
+- `--raw-read-days`: overrides the final Sheet ETL raw read window; defaults to `--sheet-display-days` when set, otherwise 30.
+- `--sheet-display-days`: optional most-recent-day display window for the ETL Sheet, ending at the latest date present in merged ETL records. This controls how many days remain visible in Sheet after merge/write; raw DB crawl checks and saves still use the full requested date range.
 - `--skip-sheet-write`: skip final ETL Sheet merge/write. With `--etl-source fresh --raw-db`, the script still crawls missing requested days and saves each successful day to raw DB, but does not update the business Sheet.
 - `--store-config`: JSON config for sequential multi-store runs. Defaults can hold shared ETL/raw workbook URIs, worksheet name, and display window; store entries provide `key`, `store`, `profile`, and raw worksheet name.
 - `--store-key`: optional repeatable filter for `--store-config` keys, ids, or store names.
@@ -276,7 +276,7 @@ Production config currently uses one shared ETL worksheet for all stores and sep
 ### Merge And Write Rules
 
 - Read the full worksheet by default, or `--read-range` if provided.
-- If `--skip-existing-days` is true, read recent raw DB worksheet snapshots first and skip OpenCLI fetch only for dates that have a raw DB `data_date` snapshot. Empty raw snapshots still count as existing raw data for that date.
+- If `--skip-existing-days` is true, read raw DB worksheet snapshots for the full requested crawl window first and skip OpenCLI fetch only for dates that have a raw DB `data_date` snapshot. Empty raw snapshots still count as existing raw data for that date.
 - Target ETL Sheet rows are read for merge/write only; they must not make a date skip crawling.
 - Merge fetched rows with existing records by:
 

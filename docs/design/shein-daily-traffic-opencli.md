@@ -247,8 +247,8 @@ Production multi-store command:
 ```bash
 python3 scripts/sync-shein-daily-traffic-to-sheet.py \
   --store-config scripts/shein-daily-traffic-prod.json \
-  --last-days 30 \
-  --raw-db \
+  --crawl-last-days 30 \
+  --etl-source raw-api \
   --ensure-headers \
   --request-timeout 120 \
   --cli-timeout 3600
@@ -289,7 +289,8 @@ Date controls:
 - `--start-date` / `--end-date` accept `YYYY-MM-DD` or `YYYYMMDD`.
 - With neither date, the script runs yesterday only.
 - With only one explicit date, the script runs that one date.
-- With `--last-days N`, the script runs the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--last-days` cannot be combined with `--start-date`.
+- With `--crawl-last-days N`, the script crawls/checks the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--crawl-last-days` cannot be combined with `--start-date`.
+- `--last-days N` remains as a legacy alias for `--crawl-last-days N`; prefer `--crawl-last-days` in new commands.
 - `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write, ending at the latest date present in merged ETL records; it does not reduce which requested days are crawled or saved to raw DB.
 - `--skip-existing-days` uses raw DB snapshots, not target ETL Sheet rows. If raw DB has a snapshot for a store/day, the crawler is skipped for that day; if the ETL Sheet has rows but raw DB has no snapshot, the day is crawled and saved to raw DB.
 

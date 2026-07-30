@@ -356,7 +356,8 @@ Important options:
 |--------|-------------|
 | `--start-date <date>` | Start date. Accepts `YYYY-MM-DD` or `YYYYMMDD`. Defaults to yesterday when both dates are omitted. |
 | `--end-date <date>` | End date. Accepts `YYYY-MM-DD` or `YYYYMMDD`. Defaults to `start-date` when omitted. |
-| `--last-days <n>` | Run the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`. |
+| `--crawl-last-days <n>` | Crawl/check the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`. |
+| `--last-days <n>` | Legacy alias for `--crawl-last-days`; prefer `--crawl-last-days` in new commands. |
 | `--store <name>` | Value written to ETL `店铺` and raw `store_name`. Defaults to `店3`. |
 | `--profile <id-or-alias>` | Browser Bridge profile id or alias. Use one dedicated OpenCLI/Chrome profile per store. |
 | `--store-config <path>` | JSON config for sequential multi-store production runs. The repo includes `scripts/shein-daily-traffic-prod.json`. |
@@ -389,8 +390,8 @@ For production, keep the same profile convention as the aftersales and feedback 
 ```bash
 python3 scripts/sync-shein-daily-traffic-to-sheet.py \
   --store-config scripts/shein-daily-traffic-prod.json \
-  --last-days 30 \
-  --raw-db \
+  --crawl-last-days 30 \
+  --etl-source raw-api \
   --ensure-headers \
   --request-timeout 120 \
   --cli-timeout 3600

@@ -1786,16 +1786,20 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     )
 
     print(f"[{args.store}] Step 3/6: fetching SHEIN daily traffic rows and saving raw DB per day.")
-    fetched_rows = [] if args.etl_source == "raw-api" else fetch_and_save_shein_rows(args, repo_root, client, missing_days)
+    fetch_args = args
+    if args.etl_source == "raw-api" and missing_days:
+        fetch_args = argparse.Namespace(**vars(args))
+        fetch_args.raw_db = True
+        print(f"[{args.store}] Raw API source is missing {len(missing_days)} day(s); crawling and saving missing raw DB snapshots.")
+    fetched_rows = fetch_and_save_shein_rows(fetch_args, repo_root, client, missing_days)
     print(f"[{args.store}] Step 3/6 completed: fetched adapter_rows={len(fetched_rows)}.")
     print(f"[{args.store}] Step 4/6 completed: raw daily rows are saved immediately after each day fetch when enabled.")
     adapter_rows = [*existing_raw_rows, *fetched_rows]
     if args.etl_source == "raw-api":
-        if client is None:
-            client = build_maybeai_client(args)
-        print(f"[{args.store}] Loading ETL source from raw API.")
-        adapter_rows = read_raw_api_rows(args, client, requested_days, response=raw_snapshot_response)
-        print(f"[{args.store}] Raw API load completed: adapter_rows={len(adapter_rows)}.")
+        print(
+            f"[{args.store}] Raw API ETL source rows combined: "
+            f"raw_db_rows={len(existing_raw_rows)}, fresh_rows={len(fetched_rows)}, total={len(adapter_rows)}."
+        )
     else:
         print(
             f"[{args.store}] ETL source rows combined: raw_db_rows={len(existing_raw_rows)}, "

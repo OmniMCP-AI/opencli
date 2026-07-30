@@ -436,6 +436,8 @@ Skip key:
 
 Daily traffic Sheet output intentionally omits `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data can be saved with `--raw-db`; by default the staging workbook is `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0` and the staging worksheet is `<store>每日流量`, for example `店3每日流量`. Later ETL can read a date range with `--etl-source raw-api --raw-db-read-path <path>`.
 
+`--etl-source raw-api` reads requested days from raw DB first. If any requested day is missing from raw DB, the script crawls that day with OpenCLI, saves the missing raw snapshot to MongoDB, and includes the freshly crawled rows in the same ETL Sheet write.
+
 Crawl-only production runs should combine `--etl-source fresh --raw-db --skip-sheet-write`. This still skips days already present in raw DB by default, crawls only missing requested days, and saves each successful day to MongoDB immediately.
 
 Existing ETL worksheet reads first call `/api/v1/excel_v2/worksheet/dimensions` to get the used row count, then read row ranges instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.

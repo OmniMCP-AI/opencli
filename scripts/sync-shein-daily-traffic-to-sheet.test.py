@@ -17,6 +17,12 @@ SPEC.loader.exec_module(sync)
 
 
 class SheinDailyTrafficSyncTests(unittest.TestCase):
+    def sheet_values(self, rows: list[dict]) -> list[list]:
+        return [
+            sync.SHEET_HEADERS,
+            *[[row.get(header, "") for header in sync.SHEET_HEADERS] for row in rows],
+        ]
+
     def test_sheet_headers_match_legacy_play_be_output_without_json_columns(self) -> None:
         legacy_headers_without_json = [
             "站点",
@@ -469,6 +475,29 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         days = sync.days_with_etl_records(records, "店1", ["2026-07-27", "2026-07-28", "2026-07-29"])
 
         self.assertEqual(days, ["2026-07-27", "2026-07-28"])
+
+    def test_write_verification_reads_each_fetched_day_with_filters(self) -> None:
+        class FakeClient:
+            def __init__(fake_self) -> None:
+                fake_self.payloads = []
+
+            def post(fake_self, path: str, payload: dict) -> dict:
+                fake_self.payloads.append(payload)
+                tokens = payload.get("filter_tokens", [])
+                if tokens == ["店铺_eq_店1", "日期_eq_2026-07-01"]:
+                    return {"values": self.sheet_values([
+                        {"店铺": "店1", "日期": "2026-07-01", "商品货号": "old-day"},
+                    ])}
+                return {"values": self.sheet_values([
+                    {"店铺": "店1", "日期": "2026-07-30", "商品货号": "recent-day"},
+                ])}
+
+        client = FakeClient()
+        args = type("Args", (), {"store": "店1", "read_range": None})()
+
+        sync.verify_written_days(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"}, args, ["2026-07-01"])
+
+        self.assertEqual(client.payloads[0]["filter_tokens"], ["店铺_eq_店1", "日期_eq_2026-07-01"])
 
     def test_sheet_display_days_keeps_recent_window_across_stores(self) -> None:
         records = [

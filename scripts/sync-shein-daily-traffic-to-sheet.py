@@ -1344,11 +1344,19 @@ def build_sheet_target(args: argparse.Namespace, client: MaybeAIClient) -> tuple
     return target, worksheet_name
 
 
-def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range: str | None = None) -> list[dict[str, Any]]:
+def read_sheet_records(
+    client: MaybeAIClient,
+    target: dict[str, Any],
+    read_range: str | None = None,
+    filter_tokens: list[str] | None = None,
+) -> list[dict[str, Any]]:
     read_payload = {**target}
     if read_range:
         read_payload["range_address"] = read_range
-    print(f"Reading existing rows from {read_range or 'entire worksheet'}...")
+    if filter_tokens:
+        read_payload["filter_tokens"] = filter_tokens
+    filter_label = f" with filters {filter_tokens}" if filter_tokens else ""
+    print(f"Reading existing rows from {read_range or 'entire worksheet'}{filter_label}...")
     read_result = client.post("/api/v1/excel/read_sheet", read_payload)
     if read_result.get("success") is False:
         raise SyncError(f"MaybeAI read_sheet did not succeed:\n{json.dumps(read_result, ensure_ascii=False)}")
@@ -1397,9 +1405,17 @@ def write_sheet_records(client: MaybeAIClient, target: dict[str, Any], records: 
 def verify_written_days(client: MaybeAIClient, target: dict[str, Any], args: argparse.Namespace, fetched_days: list[str]) -> None:
     if not fetched_days:
         return
-    visible = read_sheet_records(client, target, args.read_range)
-    visible_keys = {day_skip_key(record) for record in visible}
-    missing = [day for day in fetched_days if (args.store, day) not in visible_keys]
+    missing = []
+    for day in fetched_days:
+        visible = read_sheet_records(
+            client,
+            target,
+            args.read_range,
+            filter_tokens=[f"店铺_eq_{args.store}", f"日期_eq_{day}"],
+        )
+        visible_keys = {day_skip_key(record) for record in visible}
+        if (args.store, day) not in visible_keys:
+            missing.append(day)
     if missing:
         raise SyncError(f"Write verification failed; fetched store/day rows not visible: {missing}")
     print(f"Verified fetched days are visible: {', '.join(fetched_days)}")

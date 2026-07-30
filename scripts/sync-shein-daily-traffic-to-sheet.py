@@ -525,6 +525,19 @@ def resolve_date_range(start_date: Any = None, end_date: Any = None) -> list[str
     return dates
 
 
+def resolve_requested_days(args: argparse.Namespace) -> list[str]:
+    last_days = getattr(args, "last_days", None)
+    if last_days in (None, ""):
+        return resolve_date_range(args.start_date, args.end_date)
+    if getattr(args, "start_date", None):
+        raise SyncError("--last-days cannot be combined with --start-date. Use --end-date to choose the window end.")
+    days = positive_int_or_none(last_days, "--last-days")
+    assert days is not None
+    end = normalize_date_input(getattr(args, "end_date", None)) or default_yesterday()
+    start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    return resolve_date_range(start, end)
+
+
 def yyyymmdd(value: Any) -> str:
     return normalize_date_input(value).replace("-", "")
 
@@ -1331,11 +1344,19 @@ def build_sheet_target(args: argparse.Namespace, client: MaybeAIClient) -> tuple
     return target, worksheet_name
 
 
-def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range: str | None = None) -> list[dict[str, Any]]:
+def read_sheet_records(
+    client: MaybeAIClient,
+    target: dict[str, Any],
+    read_range: str | None = None,
+    filter_tokens: list[str] | None = None,
+) -> list[dict[str, Any]]:
     read_payload = {**target}
     if read_range:
         read_payload["range_address"] = read_range
-    print(f"Reading existing rows from {read_range or 'entire worksheet'}...")
+    if filter_tokens:
+        read_payload["filter_tokens"] = filter_tokens
+    filter_label = f" with filters {filter_tokens}" if filter_tokens else ""
+    print(f"Reading existing rows from {read_range or 'entire worksheet'}{filter_label}...")
     read_result = client.post("/api/v1/excel/read_sheet", read_payload)
     if read_result.get("success") is False:
         raise SyncError(f"MaybeAI read_sheet did not succeed:\n{json.dumps(read_result, ensure_ascii=False)}")
@@ -1384,9 +1405,17 @@ def write_sheet_records(client: MaybeAIClient, target: dict[str, Any], records: 
 def verify_written_days(client: MaybeAIClient, target: dict[str, Any], args: argparse.Namespace, fetched_days: list[str]) -> None:
     if not fetched_days:
         return
-    visible = read_sheet_records(client, target, args.read_range)
-    visible_keys = {day_skip_key(record) for record in visible}
-    missing = [day for day in fetched_days if (args.store, day) not in visible_keys]
+    missing = []
+    for day in fetched_days:
+        visible = read_sheet_records(
+            client,
+            target,
+            args.read_range,
+            filter_tokens=[f"店铺_eq_{args.store}", f"日期_eq_{day}"],
+        )
+        visible_keys = {day_skip_key(record) for record in visible}
+        if (args.store, day) not in visible_keys:
+            missing.append(day)
     if missing:
         raise SyncError(f"Write verification failed; fetched store/day rows not visible: {missing}")
     print(f"Verified fetched days are visible: {', '.join(fetched_days)}")
@@ -1399,7 +1428,7 @@ def read_existing_for_sync(args: argparse.Namespace, client: MaybeAIClient, targ
 
 
 def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
-    requested_days = resolve_date_range(args.start_date, args.end_date)
+    requested_days = resolve_requested_days(args)
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
     print(f"SHEIN daily traffic date range: {requested_days[0]} to {requested_days[-1]}")
     print(f"SHEIN daily traffic target sheet URL: {args.sheet_url}")
@@ -1475,6 +1504,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sync SHEIN daily traffic rows into a MaybeAI sheet.")
     parser.add_argument("--start-date", dest="start_date", help="Start date, YYYY-MM-DD or YYYYMMDD. Default: yesterday.")
     parser.add_argument("--end-date", dest="end_date", help="End date, YYYY-MM-DD or YYYYMMDD. Default: start-date or yesterday.")
+    parser.add_argument("--last-days", type=int, help="Run the latest N days ending at --end-date, or yesterday when --end-date is omitted. Cannot be combined with --start-date.")
     parser.add_argument("--area-cd", dest="area_cd", help="Optional SHEIN areaCd forwarded to OpenCLI.")
     parser.add_argument("--country-site", dest="country_site", help="Optional SHEIN countrySite forwarded to OpenCLI, comma-separated.")
     parser.add_argument("--page-size", dest="page_size", type=int, help="Optional SHEIN daily traffic pageSize.")

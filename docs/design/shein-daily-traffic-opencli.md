@@ -269,12 +269,12 @@ Script phases:
 3. set up daily logging;
 4. build MaybeAI client and sheet target;
 5. read existing target ETL sheet rows for merge/write only;
-6. read raw DB worksheet snapshots and compute missing days by raw snapshot `data_date`;
+6. read raw DB worksheet snapshots for the full requested crawl window and compute missing days by raw snapshot `data_date`;
 7. preflight SHEIN session with `opencli shein whoami`;
 8. login and retry when auth/session failures are detected;
 9. call `opencli shein daily-traffic -f json` only for missing days;
 10. when `--raw-db` is set, write each successfully fetched day into a raw worksheet and call `excel__save_table_worksheet_to_mongodb` immediately before fetching the next day;
-11. when `--etl-source raw-api` is set, read the configured raw API for the requested window, crawl and save any missing raw DB days, then combine raw API rows with fresh rows;
+11. when `--etl-source raw-api` is set, crawl and save any missing raw DB days, then read the configured raw API again for the Sheet display window and use those raw rows for ETL;
 12. ETL source rows to sheet records;
 13. merge by unique key;
 14. sort by date desc, then SKC asc;
@@ -291,8 +291,9 @@ Date controls:
 - With only one explicit date, the script runs that one date.
 - With `--crawl-last-days N`, the script crawls/checks the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--crawl-last-days` cannot be combined with `--start-date`.
 - `--last-days N` remains as a legacy alias for `--crawl-last-days N`; prefer `--crawl-last-days` in new commands.
-- `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write, ending at the latest date present in merged ETL records; it does not reduce which requested days are crawled or saved to raw DB.
-- `--raw-read-days N` controls how many recent raw DB snapshots are read for `--etl-source raw-api`. When omitted, it follows `--sheet-display-days` if set; otherwise it defaults to `30`.
+- `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write, ending at the latest date present in merged ETL records; it also becomes the default raw DB read window for the final Sheet ETL read. It does not reduce which requested days are checked for crawl or saved to raw DB.
+- For `--etl-source raw-api`, crawl skip planning reads raw DB snapshots for the full requested crawl window. For example, `--crawl-last-days 60 --sheet-display-days 30` checks 60 days of raw DB snapshots to decide what to crawl, then reads 30 days of raw DB snapshots for the final Sheet ETL.
+- `--raw-read-days N` overrides the final Sheet ETL raw DB read window. When omitted, it follows `--sheet-display-days` if set; otherwise it defaults to `30`.
 - `--skip-existing-days` uses raw DB snapshots, not target ETL Sheet rows. If raw DB has a snapshot for a store/day, the crawler is skipped for that day; if the ETL Sheet has rows but raw DB has no snapshot, the day is crawled and saved to raw DB.
 
 Store config:
@@ -321,9 +322,9 @@ Raw DB options:
 - `--raw-db-worksheet-name`: explicit raw worksheet name; defaults to `<store><raw-db-worksheet-suffix>`.
 - `--raw-db-worksheet-suffix`: default `每日流量`, matching the staging worksheet convention such as `店3每日流量`.
 - `--raw-db-type`: default `shein_daily_traffic`, used when querying the later raw API.
-- `--etl-source fresh|raw-api`: default `fresh`; `raw-api` reads raw rows back before ETL and automatically crawls/saves requested days that are missing from raw DB.
+- `--etl-source fresh|raw-api`: default `fresh`; `raw-api` reads raw DB snapshots for the requested crawl window, automatically crawls/saves missing requested days, then reads the Sheet display window from raw DB for ETL.
 - `--raw-db-read-path`: required by `--etl-source raw-api`; this repo does not assume a concrete read endpoint.
-- `--raw-read-days`: defaults to `--sheet-display-days` when set, otherwise `30`; read window ends at `--end-date`.
+- `--raw-read-days`: overrides the final Sheet ETL raw read window; defaults to `--sheet-display-days` when set, otherwise `30`.
 - `--skip-sheet-write`: skip final ETL Sheet merge/write after fetch/ETL summary. With `--etl-source fresh --raw-db`, this is the crawl-only mode: each missing day is crawled and saved to raw DB, but the business Sheet is not touched.
 
 MongoDB save tool payload:

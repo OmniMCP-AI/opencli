@@ -1222,7 +1222,7 @@ def build_save_table_worksheet_to_mongodb_payload(args: argparse.Namespace, data
     }
 
 
-def build_read_recent_worksheet_snapshots_payload(args: argparse.Namespace, uri: str, worksheet_name: str) -> dict[str, Any]:
+def build_read_recent_worksheet_snapshots_payload(args: argparse.Namespace, uri: str, worksheet_name: str, read_days: Any = None) -> dict[str, Any]:
     return {
         "app": "function_call",
         "tool_id": DEFAULT_RAW_DB_READ_TOOL_ID,
@@ -1230,12 +1230,15 @@ def build_read_recent_worksheet_snapshots_payload(args: argparse.Namespace, uri:
         "tool_args": {
             "uri": uri,
             "worksheet_name": worksheet_name,
-            "last_n_days": effective_raw_read_days(args),
+            "last_n_days": effective_raw_read_days(args, read_days=read_days),
         },
     }
 
 
-def effective_raw_read_days(args: argparse.Namespace) -> int:
+def effective_raw_read_days(args: argparse.Namespace, read_days: Any = None) -> int:
+    if read_days not in (None, ""):
+        days = positive_int_or_none(read_days, "--raw-read-days")
+        return days or DEFAULT_RAW_READ_DAYS
     cli_override_keys = set(getattr(args, "_cli_override_keys", set()) or set())
     if "raw_read_days" not in cli_override_keys:
         sheet_display_days = positive_int_or_none(getattr(args, "sheet_display_days", None), "--sheet-display-days")
@@ -1426,13 +1429,20 @@ def raw_api_date_window(requested_days: list[str], read_days: int) -> tuple[str,
     return start_dt.strftime("%Y-%m-%d"), end
 
 
-def read_raw_api_snapshot_response(args: argparse.Namespace, client: "MaybeAIClient", requested_days: list[str]) -> Any:
+def read_raw_api_snapshot_response(
+    args: argparse.Namespace,
+    client: "MaybeAIClient",
+    requested_days: list[str],
+    read_days: Any = None,
+    purpose: str = "raw DB",
+) -> Any:
     if not args.raw_db_read_path:
         raise SyncError("--etl-source raw-api requires --raw-db-read-path.")
     uri = raw_db_uri(args)
     worksheet_name = raw_db_worksheet_name(args, args.store)
-    payload = build_read_recent_worksheet_snapshots_payload(args, uri=uri, worksheet_name=worksheet_name)
-    print(f"Reading raw SHEIN daily traffic worksheet snapshots: uri={uri}, worksheet={worksheet_name}, last_n_days={effective_raw_read_days(args)}")
+    resolved_read_days = effective_raw_read_days(args, read_days=read_days)
+    payload = build_read_recent_worksheet_snapshots_payload(args, uri=uri, worksheet_name=worksheet_name, read_days=resolved_read_days)
+    print(f"Reading raw SHEIN daily traffic worksheet snapshots for {purpose}: uri={uri}, worksheet={worksheet_name}, last_n_days={resolved_read_days}")
     return client.post(args.raw_db_read_path, payload)
 
 
@@ -1780,9 +1790,9 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     client: MaybeAIClient | None = None
     target: dict[str, Any] | None = None
     worksheet_name: str | None = None
-    raw_snapshot_response: Any = None
     raw_snapshot_days: set[str] = set()
     existing_raw_rows: list[dict[str, Any]] = []
+    plan_raw_rows: list[dict[str, Any]] = []
 
     needs_sheet_target = not args.dry_run and not skip_sheet_write
     needs_client = (
@@ -1806,13 +1816,19 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if args.skip_existing_days or args.etl_source == "raw-api":
         if client is None:
             client = build_maybeai_client(args)
-        print(f"[{args.store}] Reading raw DB snapshots to decide crawl skip days.")
-        raw_snapshot_response = read_raw_api_snapshot_response(args, client, requested_days)
+        print(f"[{args.store}] Reading raw DB snapshots to decide crawl skip days; crawl_window_days={len(requested_days)}.")
+        raw_snapshot_response = read_raw_api_snapshot_response(
+            args,
+            client,
+            requested_days,
+            read_days=len(requested_days),
+            purpose="crawl plan",
+        )
         raw_snapshot_days = extract_raw_snapshot_days(raw_snapshot_response)
-        existing_raw_rows = read_raw_api_rows(args, client, requested_days, response=raw_snapshot_response)
+        plan_raw_rows = read_raw_api_rows(args, client, requested_days, response=raw_snapshot_response)
         print(
-            f"[{args.store}] Raw DB snapshot plan source: snapshots={len(raw_snapshot_days)}, "
-            f"raw_rows={len(existing_raw_rows)}."
+            f"[{args.store}] Raw DB crawl plan source: snapshots={len(raw_snapshot_days)}, "
+            f"raw_rows={len(plan_raw_rows)}."
         )
 
     missing_days, skipped_days = compute_missing_days_from_existing_days(requested_days, raw_snapshot_days, args.skip_existing_days)
@@ -1833,11 +1849,40 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     fetched_rows = fetch_and_save_shein_rows(fetch_args, repo_root, client, missing_days)
     print(f"[{args.store}] Step 3/6 completed: fetched adapter_rows={len(fetched_rows)}.")
     print(f"[{args.store}] Step 4/6 completed: raw daily rows are saved immediately after each day fetch when enabled.")
-    adapter_rows = [*existing_raw_rows, *fetched_rows]
+    etl_fresh_rows = fetched_rows
+    if args.etl_source == "raw-api" and not skip_sheet_write:
+        assert client is not None
+        display_read_days = effective_raw_read_days(args)
+        print(f"[{args.store}] Reading raw DB snapshots for Sheet ETL display; display_window_days={display_read_days}.")
+        display_snapshot_response = read_raw_api_snapshot_response(
+            args,
+            client,
+            requested_days,
+            read_days=display_read_days,
+            purpose="sheet ETL",
+        )
+        existing_raw_rows = read_raw_api_rows(args, client, requested_days, response=display_snapshot_response)
+        display_raw_days = extract_raw_snapshot_days(display_snapshot_response)
+        display_day_set = set(requested_days[-display_read_days:])
+        fetched_display_rows = [
+            row
+            for row in fetched_rows
+            if row_source_day(row) in display_day_set and row_source_day(row) not in display_raw_days
+        ]
+        if fetched_display_rows:
+            print(
+                f"[{args.store}] Sheet ETL raw DB read is missing {len(fetched_display_rows)} fresh row(s); "
+                "including freshly crawled rows for display fallback."
+            )
+        etl_fresh_rows = fetched_display_rows
+        adapter_rows = [*existing_raw_rows, *fetched_display_rows]
+    else:
+        existing_raw_rows = plan_raw_rows if args.etl_source == "raw-api" else []
+        adapter_rows = [*existing_raw_rows, *fetched_rows]
     if args.etl_source == "raw-api":
         print(
             f"[{args.store}] Raw API ETL source rows combined: "
-            f"raw_db_rows={len(existing_raw_rows)}, fresh_rows={len(fetched_rows)}, total={len(adapter_rows)}."
+            f"raw_db_rows={len(existing_raw_rows)}, fresh_rows={len(etl_fresh_rows)}, total={len(adapter_rows)}."
         )
     else:
         print(
@@ -1925,10 +1970,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-db-worksheet-name", help="Worksheet name used as the raw MongoDB staging table. Defaults to <store><raw-db-worksheet-suffix>.")
     parser.add_argument("--raw-db-worksheet-suffix", default=DEFAULT_RAW_DB_WORKSHEET_SUFFIX, help=f"Worksheet suffix used when --raw-db-worksheet-name is omitted. Default: {DEFAULT_RAW_DB_WORKSHEET_SUFFIX}")
     parser.add_argument("--raw-db-read-path", default=DEFAULT_RAW_DB_READ_PATH, help=f"MaybeAI function_call API path used by --etl-source raw-api to load recent raw worksheet snapshots. Default: {DEFAULT_RAW_DB_READ_PATH}")
-    parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Days to request from the raw API ending at --end-date. Defaults to --sheet-display-days when set, otherwise {DEFAULT_RAW_READ_DAYS}.")
+    parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Final Sheet ETL raw API read window. Crawl skip planning uses the requested crawl window. Defaults to --sheet-display-days when set, otherwise {DEFAULT_RAW_READ_DAYS}.")
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh", help="Use freshly crawled CLI rows or rows loaded back from the raw API for Sheet ETL. Default: fresh")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
-    parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at the latest date present in merged ETL records. Raw DB saves still use the requested date range.")
+    parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at the latest date present in merged ETL records. Also defaults the final raw DB ETL read window. Raw DB crawl checks and saves still use the requested date range.")
     parser.add_argument("--skip-sheet-write", action="store_true", help="Fetch and optionally save raw DB rows, run ETL summary, and skip final ETL sheet merge/write. Off by default.")
     parser.add_argument("--clear-worksheet-data", action="store_true", help="Discard existing data rows before writing fetched rows. Headers are preserved.")
     parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when the raw DB worksheet already has a snapshot for that date. Default: true")

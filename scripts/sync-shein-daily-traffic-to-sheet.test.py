@@ -195,6 +195,49 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(fetch_rows.call_args.args[3], ["2026-07-02"])
         self.assertEqual([row["商品货号"] for row in written_records], ["fresh-skc", "raw-skc"])
 
+    def test_raw_api_uses_crawl_window_for_skip_and_display_window_for_sheet_etl(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": "etl-sheet",
+            "dry_run": False,
+            "skip_sheet_write": False,
+            "skip_existing_days": True,
+            "raw_db": False,
+            "etl_source": "raw-api",
+            "raw_read_days": 30,
+            "sheet_display_days": 2,
+            "_cli_override_keys": {"sheet_display_days"},
+            "clear_worksheet_data": True,
+            "ensure_headers": False,
+        })()
+        plan_response = {"result": {"snapshots": [
+            {"data_date": "2026-07-01", "headers": ["date", "skc"], "rows": [["2026-07-01", "plan-01"]]},
+            {"data_date": "2026-07-03", "headers": ["date", "skc"], "rows": [["2026-07-03", "plan-03"]]},
+            {"data_date": "2026-07-04", "headers": ["date", "skc"], "rows": [["2026-07-04", "plan-04"]]},
+        ]}}
+        display_response = {"result": {"snapshots": [
+            {"data_date": "2026-07-03", "headers": ["date", "skc"], "rows": [["2026-07-03", "display-03"]]},
+            {"data_date": "2026-07-04", "headers": ["date", "skc"], "rows": [["2026-07-04", "display-04"]]},
+        ]}}
+        written_records: list[dict] = []
+
+        with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"]), \
+            mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "每日流量ETL")), \
+            mock.patch.object(sync, "read_existing_for_sync", return_value=[]), \
+            mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]) as read_raw, \
+            mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"date": "2026-07-02", "skc": "fresh-02"}]) as fetch_rows, \
+            mock.patch.object(sync, "write_sheet_records", side_effect=lambda _client, _target, records, _args: written_records.extend(records)), \
+            mock.patch.object(sync, "verify_written_days"):
+            sync.run_sync(args, Path("."))
+
+        self.assertEqual(fetch_rows.call_args.args[3], ["2026-07-02"])
+        self.assertEqual(read_raw.call_count, 2)
+        self.assertEqual(read_raw.call_args_list[0].kwargs["read_days"], 4)
+        self.assertEqual(read_raw.call_args_list[1].kwargs["read_days"], 2)
+        self.assertEqual({row["商品货号"] for row in written_records}, {"display-03", "display-04"})
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

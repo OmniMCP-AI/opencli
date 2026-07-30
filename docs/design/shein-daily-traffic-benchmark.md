@@ -263,8 +263,9 @@ Run the same store/day again with default `--skip-existing-days`.
 
 Pass:
 
-- script reads the sheet before SHEIN fetch;
-- date is marked skipped because `店铺 + 日期` exists;
+- script reads raw DB worksheet snapshots before SHEIN fetch;
+- date is marked skipped because raw DB has a `data_date` snapshot for that store/day;
+- target ETL Sheet rows alone do not mark a date skipped;
 - no `opencli shein daily-traffic` subprocess is launched for the skipped day;
 - script exits `0`;
 - sheet row count remains unchanged.
@@ -274,6 +275,7 @@ Record:
 | Metric | Value |
 |---|---|
 | skipped day count | |
+| raw snapshot days | |
 | OpenCLI fetch count | |
 | row count before | |
 | row count after | |
@@ -422,7 +424,7 @@ The implementation is benchmark-passing when:
 - no JSON blob fields appear in sheet output;
 - dry run completes without writing;
 - first write is visible in MaybeAI Sheet;
-- rerun skip avoids SHEIN fetch for existing `店铺 + 日期`;
+- rerun skip avoids SHEIN fetch for existing raw DB `data_date` snapshots;
 - forced merge does not duplicate unique keys;
 - reliability is at least 4/5 serial smoke runs;
 - no unrelated SHEIN adapter tests regress.

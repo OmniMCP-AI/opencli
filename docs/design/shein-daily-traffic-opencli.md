@@ -268,8 +268,8 @@ Script phases:
 2. normalize date range;
 3. set up daily logging;
 4. build MaybeAI client and sheet target;
-5. read existing sheet rows;
-6. compute missing days by `店铺 + 日期`;
+5. read existing target ETL sheet rows for merge/write only;
+6. read raw DB worksheet snapshots and compute missing days by raw snapshot `data_date`;
 7. preflight SHEIN session with `opencli shein whoami`;
 8. login and retry when auth/session failures are detected;
 9. call `opencli shein daily-traffic -f json` only for missing days;
@@ -291,6 +291,7 @@ Date controls:
 - With only one explicit date, the script runs that one date.
 - With `--last-days N`, the script runs the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--last-days` cannot be combined with `--start-date`.
 - `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write; it does not reduce which requested days are crawled or saved to raw DB.
+- `--skip-existing-days` uses raw DB snapshots, not target ETL Sheet rows. If raw DB has a snapshot for a store/day, the crawler is skipped for that day; if the ETL Sheet has rows but raw DB has no snapshot, the day is crawled and saved to raw DB.
 
 Store config:
 
@@ -406,6 +407,7 @@ Script:
 Write verification:
 
 - Only fetched days with at least one ETL row are verified. A source day with zero SHEIN rows is written/saved as raw data when requested, but it is not required to appear in the ETL Sheet.
+- Crawl skip decisions come from raw DB snapshots. Target ETL Sheet reads are for merge/write preservation only.
 - Full ETL Sheet reads first call `/api/v1/excel_v2/worksheet/dimensions` for the used row count, then read row ranges in chunks of 10,000 data rows: `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets, without probing empty ranges.
 - Verification reads back the expected written row with a one-row range such as `A4:AD4`. It does not use MaybeAI `filter_tokens`, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
 - These range reads avoid false failures when an unbounded `read_sheet` returns only a capped date-desc slice.

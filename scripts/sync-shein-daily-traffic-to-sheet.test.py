@@ -97,6 +97,17 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         for forbidden in ["每日流量明细JSON", "活动信息JSON", "权益活动JSON", "原始JSON", "raw_json"]:
             self.assertNotIn(forbidden, record)
 
+    def test_maps_zero_sale_flag_to_legacy_non_sale_status(self) -> None:
+        record = sync.adapter_row_to_record({
+            "date": "2026-07-08",
+            "goods_name": "Kitchen Rack",
+            "spu": "spu-1",
+            "skc": "skc-1",
+            "sale_flag": 0,
+        }, "店3")
+
+        self.assertEqual(record["商品当前状态"], "非在售")
+
     def test_builds_daily_raw_db_document_with_stable_key(self) -> None:
         args = type("Args", (), {
             "store": "店3",

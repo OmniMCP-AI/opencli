@@ -768,8 +768,8 @@ def map_status_flag(value: Any) -> Any:
     text = str(value).strip().lower()
     if text in {"1", "true", "yes", "在售"}:
         return "在售"
-    if text in {"0", "false", "no", "下架"}:
-        return "下架"
+    if text in {"0", "false", "no", "非在售", "下架"}:
+        return "非在售"
     return normalize_cell(value)
 
 

@@ -33,6 +33,7 @@ Create:
 - `clis/shein/daily-traffic.js`
 - `clis/shein/daily-traffic.test.js`
 - `scripts/sync-shein-daily-traffic-to-sheet.py`
+- `scripts/shein-daily-traffic-prod.json`
 
 Modify:
 
@@ -230,7 +231,7 @@ Missing scalar values should normalize to empty string unless the field is a cou
 
 ## Script Contract
 
-Command:
+Single-store command:
 
 ```bash
 python3 scripts/sync-shein-daily-traffic-to-sheet.py \
@@ -241,7 +242,19 @@ python3 scripts/sync-shein-daily-traffic-to-sheet.py \
   --end-date 2026-07-28
 ```
 
-The script handles one store/profile pair per run. Multi-store scheduling is outside this script.
+Production multi-store command:
+
+```bash
+python3 scripts/sync-shein-daily-traffic-to-sheet.py \
+  --store-config scripts/shein-daily-traffic-prod.json \
+  --last-days 30 \
+  --raw-db \
+  --ensure-headers \
+  --request-timeout 120 \
+  --cli-timeout 3600
+```
+
+The core sync still processes one store/profile pair at a time. `--store-config` runs those store configs sequentially in one process, using one dedicated Browser Bridge profile per store.
 
 Environment:
 
@@ -265,10 +278,37 @@ Script phases:
 12. ETL source rows to sheet records;
 13. merge by unique key;
 14. sort by date desc, then SKC asc;
-15. write with `update_data_keep_headers`;
-16. read back and verify fetched days are visible.
+15. optionally keep only the `--sheet-display-days` most recent days in the ETL Sheet;
+16. write with `update_data_keep_headers`;
+17. read back each fetched `店铺 + 日期` by its written one-row range and verify visible days.
 
 `--dry-run` runs through fetch and ETL, then prints a summary/sample and skips MaybeAI write.
+
+Date controls:
+
+- `--start-date` / `--end-date` accept `YYYY-MM-DD` or `YYYYMMDD`.
+- With neither date, the script runs yesterday only.
+- With only one explicit date, the script runs that one date.
+- With `--last-days N`, the script runs the latest `N` days ending at `--end-date`, or yesterday when `--end-date` is omitted. `--last-days` cannot be combined with `--start-date`.
+- `--sheet-display-days N` controls how many recent days remain visible in the final ETL worksheet after merge/write; it does not reduce which requested days are crawled or saved to raw DB.
+
+Store config:
+
+```json
+{
+  "defaults": {
+    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c370e55e966f026e1d8",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c410e55e966f026e1e5",
+    "worksheet_name": "每日流量ETL",
+    "sheet_display_days": 30
+  },
+  "stores": [
+    {"key": "store1", "store": "店1", "profile": "jegkb2wv", "raw_db_worksheet_name": "店1每日流量"},
+    {"key": "store2", "store": "店2", "profile": "m3cjm28a", "raw_db_worksheet_name": "店2每日流量"},
+    {"key": "store3", "store": "店3", "profile": "w2db43wa", "raw_db_worksheet_name": "店3每日流量"}
+  ]
+}
+```
 
 Raw DB options:
 
@@ -297,6 +337,14 @@ MongoDB save tool payload:
 }
 ```
 
+The raw save is called once per successfully crawled store/day. The logged `raw_key` is:
+
+```text
+shein_daily_traffic:<store>:<profile>:<YYYY-MM-DD>
+```
+
+The MongoDB uniqueness boundary is the save tool input: raw workbook document, worksheet name, and `data_date`. With the prod config above that means each store/day lands in its own raw worksheet/date snapshot, while all stores share the final ETL worksheet.
+
 ## Sheet ETL
 
 Target headers match the legacy SHEIN daily traffic worksheet at `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41`. Raw source data, including detailed scalar fields and JSON payloads, is stored in the raw DB worksheet and can be read back for future re-ETL.
@@ -317,7 +365,7 @@ Derived fields:
 | `站点` | constant `SHEIN` |
 | `店铺` | script `--store` |
 | `日期` | adapter `date` |
-| `商品当前状态` | map `sale_flag`: `1 -> 在售`, `0 -> 下架`, otherwise preserve |
+| `商品当前状态` | map `sale_flag`: `1 -> 在售`, `0 -> 非在售`, otherwise preserve source text such as `下架` |
 | `件数（已下单）` | `pay_order_cnt`, blank source becomes `0` |
 | `件数（已确认订单）` | `sale_cnt`, blank source becomes `0` |
 
@@ -354,6 +402,13 @@ Script:
 - non-retryable CLI failure: fail immediately;
 - MaybeAI 429/5xx/network: retry with configured backoff;
 - write verification failure: exit `1`.
+
+Write verification:
+
+- Only fetched days with at least one ETL row are verified. A source day with zero SHEIN rows is written/saved as raw data when requested, but it is not required to appear in the ETL Sheet.
+- Full ETL Sheet reads use row ranges in chunks of 10,000 data rows: `A1:AD10001`, then `A10002:AD20001`, and so on. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets.
+- Verification reads back the expected written row with a one-row range such as `A4:AD4`. It does not use MaybeAI `filter_tokens`, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
+- These range reads avoid false failures when an unbounded `read_sheet` returns only a capped date-desc slice.
 
 ## Test Design
 
@@ -408,7 +463,7 @@ Script tests should be network-free. Use stdlib `unittest` or a `--self-test` mo
 ## Non-Goals
 
 - No play-be code change.
-- No multi-store orchestration inside the script.
+- No concurrent multi-store orchestration inside the script. `--store-config` is sequential by design.
 - No JSON blob fields in MaybeAI Sheet.
 - No local raw JSON archive.
 - No default prod DB write; raw DB write is opt-in with `--raw-db`.

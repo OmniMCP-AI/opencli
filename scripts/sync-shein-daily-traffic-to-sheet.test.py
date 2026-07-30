@@ -476,28 +476,73 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(days, ["2026-07-27", "2026-07-28"])
 
-    def test_write_verification_reads_each_fetched_day_with_filters(self) -> None:
+    def test_read_sheet_records_reads_entire_sheet_in_ranges(self) -> None:
         class FakeClient:
             def __init__(fake_self) -> None:
                 fake_self.payloads = []
 
             def post(fake_self, path: str, payload: dict) -> dict:
                 fake_self.payloads.append(payload)
-                tokens = payload.get("filter_tokens", [])
-                if tokens == ["店铺_eq_店1", "日期_eq_2026-07-01"]:
+                range_address = payload.get("range_address")
+                if range_address == "A1:AD3":
+                    return {"values": self.sheet_values([
+                        {"店铺": "店1", "日期": "2026-07-30", "商品货号": "row-1"},
+                        {"店铺": "店1", "日期": "2026-07-29", "商品货号": "row-2"},
+                    ])}
+                if range_address == "A4:AD5":
+                    return {"values": self.sheet_values([
+                        {"店铺": "店1", "日期": "2026-07-28", "商品货号": "row-3"},
+                    ])[1:]}
+                self.fail(f"unexpected read range: {range_address}")
+
+        old_chunk_rows = sync.SHEET_READ_CHUNK_ROWS
+        sync.SHEET_READ_CHUNK_ROWS = 2
+        try:
+            client = FakeClient()
+            records = sync.read_sheet_records(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"})
+        finally:
+            sync.SHEET_READ_CHUNK_ROWS = old_chunk_rows
+
+        self.assertEqual([(row["日期"], row["商品货号"]) for row in records], [
+            ("2026-07-30", "row-1"),
+            ("2026-07-29", "row-2"),
+            ("2026-07-28", "row-3"),
+        ])
+        self.assertEqual([payload["range_address"] for payload in client.payloads], ["A1:AD3", "A4:AD5"])
+
+    def test_write_verification_reads_each_fetched_day_by_written_row_range(self) -> None:
+        class FakeClient:
+            def __init__(fake_self) -> None:
+                fake_self.payloads = []
+
+            def post(fake_self, path: str, payload: dict) -> dict:
+                fake_self.payloads.append(payload)
+                if payload.get("filter_tokens"):
+                    return {
+                        "success": False,
+                        "source_info": {"reason": "unsupported_filter_read"},
+                        "message": "Base-only read_sheet does not yet support workbook/filter projection semantics",
+                    }
+                if payload.get("range_address") == "A4:AD4":
                     return {"values": self.sheet_values([
                         {"店铺": "店1", "日期": "2026-07-01", "商品货号": "old-day"},
-                    ])}
+                    ])[1:]}
                 return {"values": self.sheet_values([
                     {"店铺": "店1", "日期": "2026-07-30", "商品货号": "recent-day"},
                 ])}
 
         client = FakeClient()
         args = type("Args", (), {"store": "店1", "read_range": None})()
+        display_records = [
+            {"店铺": "店1", "日期": "2026-07-30", "商品货号": "recent-day"},
+            {"店铺": "店2", "日期": "2026-07-01", "商品货号": "other-store"},
+            {"店铺": "店1", "日期": "2026-07-01", "商品货号": "old-day"},
+        ]
 
-        sync.verify_written_days(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"}, args, ["2026-07-01"])
+        sync.verify_written_days(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"}, args, display_records, ["2026-07-01"])
 
-        self.assertEqual(client.payloads[0]["filter_tokens"], ["店铺_eq_店1", "日期_eq_2026-07-01"])
+        self.assertEqual(client.payloads[0].get("filter_tokens"), None)
+        self.assertEqual(client.payloads[0]["range_address"], "A4:AD4")
 
     def test_sheet_display_days_keeps_recent_window_across_stores(self) -> None:
         records = [

@@ -356,11 +356,13 @@ Important options:
 |--------|-------------|
 | `--start-date <date>` | Start date. Accepts `YYYY-MM-DD` or `YYYYMMDD`. Defaults to yesterday when both dates are omitted. |
 | `--end-date <date>` | End date. Accepts `YYYY-MM-DD` or `YYYYMMDD`. Defaults to `start-date` when omitted. |
+| `--last-days <n>` | Run the latest `n` days ending at `--end-date`, or yesterday when `--end-date` is omitted. Cannot be combined with `--start-date`. |
 | `--store <name>` | Value written to ETL `店铺` and raw `store_name`. Defaults to `店3`. |
 | `--profile <id-or-alias>` | Browser Bridge profile id or alias. Use one dedicated OpenCLI/Chrome profile per store. |
-| `--store-config <path>` | JSON config for sequential multi-store production runs. See `scripts/shein-daily-traffic-prod.example.json`. |
+| `--store-config <path>` | JSON config for sequential multi-store production runs. The repo includes `scripts/shein-daily-traffic-prod.json`. |
 | `--store-key <key>` | Run only matching config keys, ids, or store names. Can be passed multiple times. |
 | `--sheet-url <url>` | Target MaybeAI spreadsheet URL with `gid`. |
+| `--sheet-display-days <n>` | Keep only the most recent `n` days visible in the ETL worksheet after merge/write. Raw DB saves still use the requested date range. |
 | `--area-cd <code>` | Forwarded to `opencli shein daily-traffic --areaCd`. |
 | `--country-site <value>` | Forwarded to `opencli shein daily-traffic --countrySite`. |
 | `--page-size <n>` | Forwarded to `opencli shein daily-traffic --pageSize`. |
@@ -386,8 +388,11 @@ For production, keep the same profile convention as the aftersales and feedback 
 ```bash
 python3 scripts/sync-shein-daily-traffic-to-sheet.py \
   --store-config scripts/shein-daily-traffic-prod.json \
+  --last-days 30 \
   --raw-db \
-  --ensure-headers
+  --ensure-headers \
+  --request-timeout 120 \
+  --cli-timeout 3600
 ```
 
 The config shape is:
@@ -395,13 +400,15 @@ The config shape is:
 ```json
 {
   "defaults": {
-    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/<etl-doc-id>?gid=<gid>",
-    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/<raw-doc-id>?gid=<gid>"
+    "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c370e55e966f026e1d8",
+    "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6a2c410e55e966f026e1e5",
+    "worksheet_name": "每日流量ETL",
+    "sheet_display_days": 30
   },
   "stores": [
-    {"key": "store1", "store": "店1", "profile": "profile1", "worksheet_name": "店1每日流量ETL", "raw_db_worksheet_name": "店1每日流量"},
-    {"key": "store2", "store": "店2", "profile": "profile2", "worksheet_name": "店2每日流量ETL", "raw_db_worksheet_name": "店2每日流量"},
-    {"key": "store3", "store": "店3", "profile": "profile3", "worksheet_name": "店3每日流量ETL", "raw_db_worksheet_name": "店3每日流量"}
+    {"key": "store1", "store": "店1", "profile": "jegkb2wv", "raw_db_worksheet_name": "店1每日流量"},
+    {"key": "store2", "store": "店2", "profile": "m3cjm28a", "raw_db_worksheet_name": "店2每日流量"},
+    {"key": "store3", "store": "店3", "profile": "w2db43wa", "raw_db_worksheet_name": "店3每日流量"}
   ]
 }
 ```
@@ -427,6 +434,8 @@ Skip key:
 ```
 
 Daily traffic Sheet output intentionally omits `每日流量明细JSON`, `活动信息JSON`, `权益活动JSON`, and `原始JSON`. Raw source data can be saved with `--raw-db`; by default the staging workbook is `https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0` and the staging worksheet is `<store>每日流量`, for example `店3每日流量`. Later ETL can read a date range with `--etl-source raw-api --raw-db-read-path <path>`.
+
+Existing ETL worksheet reads are chunked by row range instead of using an unbounded full-sheet read. The default chunks are `A1:AD10001`, then `A10002:AD20001`, and so on. Write verification reads back the expected one-row range, such as `A4:AD4`; it does not use MaybeAI `filter_tokens` because Base-only `read_sheet` does not support them.
 
 ## Troubleshooting
 

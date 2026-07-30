@@ -219,7 +219,8 @@ Pass:
 - write API is `update_data_keep_headers`;
 - data starts at row 2;
 - headers remain intact;
-- read-back verification finds at least one row for each fetched `店铺 + 日期`;
+- read-back verification finds at least one row for each fetched `店铺 + 日期` that produced ETL rows;
+- verification reads the expected written row range, not a filtered `read_sheet` query;
 - no rows for other stores are removed.
 
 Record:
@@ -231,6 +232,27 @@ Record:
 | merged rows after | |
 | preserved other-store rows | |
 | verification attempts | |
+| verification ranges | |
+
+### Large Sheet Read
+
+Run against an ETL worksheet with more than 10,000 rows, such as a 30-day multi-store output.
+
+Pass:
+
+- the initial existing-row read uses explicit row ranges, starting with `A1:AD10001`;
+- additional chunks continue as `A10002:AD20001`, `A20002:AD30001`, and so on until a short chunk is returned;
+- old dates beyond the first 10,000 returned rows are still available for `--skip-existing-days`;
+- no `filter_tokens` are sent to MaybeAI `read_sheet`.
+
+Record:
+
+| Metric | Value |
+|---|---|
+| sheet rows | |
+| chunk count | |
+| chunk ranges | |
+| old-date skip verified | |
 
 ### Rerun Skip
 

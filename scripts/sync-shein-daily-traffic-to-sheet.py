@@ -267,6 +267,7 @@ STORE_CONFIG_FILL_ONLY_KEYS = {
 
 CLI_OVERRIDE_OPTION_DESTS = {
     "--sheet-url": "sheet_url",
+    "--worksheet-name": "worksheet_name",
     "--sheet-display-days": "sheet_display_days",
     "--raw-read-days": "raw_read_days",
 }
@@ -339,6 +340,8 @@ def args_for_store_config(args: argparse.Namespace, config: dict[str, Any]) -> a
     for key in STORE_CONFIG_ALLOWED_KEYS:
         value = config.get(key)
         if key in STORE_CONFIG_FILL_ONLY_KEYS and key in cli_override_keys:
+            continue
+        if key == "worksheet_name" and "sheet_url" in cli_override_keys and "worksheet_name" not in cli_override_keys:
             continue
         if value is not None and value != "":
             setattr(scoped, key, value)

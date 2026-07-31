@@ -325,6 +325,7 @@ play-be 当前映射线索：
 - `状态`：`state` 映射：
   - `3` -> `开启`
   - `4` -> `已结束`
+  - `5` -> `已撤销`
   - `6` -> `已终止`
 
 OpenCLI raw activity list 参考字段：
@@ -365,7 +366,7 @@ sku_info_list_json, raw_json
 - `活动商品skc` 一行应该是一活动一 SKC，还是一活动一 SKU；旧 detail task unique key 是 `activity_id + skc + sku`，play-be 最终 11 列会丢失 `sku`。
 - `活动名称` 应优先使用 activity list 的 `activity_name`、`act_name` 还是 detail 里的名称字段。
 - `活动规格` 是否只支持 `type_id=31/1/2/9/21`，其他 type 是否原样保留。
-- `状态` 的 `state=3/4/6` 映射是否完整。
+- `状态` 的 `state=3/4/5/6` 映射是否完整。
 - `活动终止时间` 在 raw list 里未稳定出现时是否允许为空。
 - 源站活动列表查询窗口是否应固定最近 6 个月，还是跟业务脚本的 crawl day/display window 绑定。
 - 缺失历史 `data_date` 时，是否允许用当前 SHEIN 活动状态补写过去 raw snapshot；若不允许，历史缺失日期应报错或只跳过。

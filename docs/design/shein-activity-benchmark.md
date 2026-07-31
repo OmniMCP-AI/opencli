@@ -209,7 +209,7 @@ Pass：
 - summary 包含 crawl window、display window、store、profile、fetched/skipped day count、raw row count、ETL row count；
 - sample ETL row 只有 11 个 legacy header；
 - `活动规格` 映射 `31/1/2/9/21`；
-- `状态` 映射 `3/4/6`；
+- `状态` 映射 `3/4/5/6`；
 - `活动时间` 由开始/结束时间生成；
 - 空详情或空 `活动商品skc` 时仍保留活动业务行，商品字段为空，以对齐 legacy play-be live 产物。
 

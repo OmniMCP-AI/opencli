@@ -154,6 +154,7 @@ ACTIVITY_TYPE_MAPPING = {
 STATE_MAPPING = {
     "3": "开启",
     "4": "已结束",
+    "5": "已撤销",
     "6": "已终止",
 }
 

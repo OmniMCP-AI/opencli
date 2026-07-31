@@ -68,6 +68,10 @@ class SheinActivitySyncTests(unittest.TestCase):
         })
         self.assertEqual(set(record), set(sync.SHEET_HEADERS))
 
+    def test_maps_revoked_activity_state(self) -> None:
+        self.assertEqual(sync.map_activity_state(5), "已撤销")
+        self.assertEqual(sync.map_activity_state("5.0"), "已撤销")
+
     def test_keeps_list_only_and_blank_skc_activity_rows_in_etl(self) -> None:
         rows = [
             {"record_type": "activity_list_only", "activity_name": "Only list", "skc": ""},

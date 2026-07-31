@@ -404,7 +404,7 @@ raw-api 写表策略：
 | `活动开始时间` | 列表 `start_time/startTime/activity_start_time/activityStartTime`。 |
 | `活动结束时间` | 列表 `end_time/endTime/activity_end_time/activityEndTime`。 |
 | `活动终止时间` | `terminateTime/terminatedTime/stopTime/closeTime/cancelTime/abortTime` alias。 |
-| `状态` | `state/status` 映射：`3=开启`、`4=已结束`、`6=已终止`；无法映射则保留源值。 |
+| `状态` | `state/status` 映射：`3=开启`、`4=已结束`、`5=已撤销`、`6=已终止`；无法映射则保留源值。 |
 
 业务 Sheet 中不写 `activity_id`、查询参数、库存、价格、SKU 属性、raw JSON。这些都留在 raw DB。
 

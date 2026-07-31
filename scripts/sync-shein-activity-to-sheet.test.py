@@ -179,8 +179,9 @@ class SheinActivitySyncTests(unittest.TestCase):
         client = FakeClient()
         sync.save_raw_activity_rows(args, client, "2026-07-30", [])
 
-        update_call = client.calls[1]
-        self.assertEqual(client.calls[0][0], "/api/v1/excel/update_range")
+        update_call = next(call for call in client.calls if call[0] == "/api/v1/excel/update_data_keep_headers")
+        self.assertEqual(client.calls[0][0], sync.WORKSHEET_DIMENSIONS_PATH)
+        self.assertTrue(any(call[0] == "/api/v1/excel/update_range" for call in client.calls))
         self.assertEqual(update_call[0], "/api/v1/excel/update_data_keep_headers")
         self.assertEqual(update_call[1]["data"][0]["record_type"], "empty_snapshot")
         self.assertEqual(update_call[1]["data"][0]["raw_db_type"], "shein_activity")
@@ -188,7 +189,7 @@ class SheinActivitySyncTests(unittest.TestCase):
         self.assertEqual(update_call[1]["data"][0]["snapshot_date"], "2026-07-30")
         self.assertEqual(update_call[1]["data"][0]["store"], "店1")
         self.assertEqual(update_call[1]["data"][0]["profile"], "profile1")
-        self.assertEqual(client.calls[2][0], sync.DEFAULT_RAW_DB_SAVE_PATH)
+        self.assertEqual(client.calls[-1][0], sync.DEFAULT_RAW_DB_SAVE_PATH)
 
     def test_save_raw_activity_rows_retries_legacy_save_payload_if_key_args_rejected(self) -> None:
         args = type("Args", (), {

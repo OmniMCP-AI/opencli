@@ -129,6 +129,17 @@ RAW_SHEET_HEADERS = [
     "raw_json",
 ]
 
+RAW_DB_OMIT_HEADERS = {
+    "sku_attr_info_list_json",
+    "goods_country_attr_info_list_json",
+    "sku_info_list_json",
+    "raw_activity_json",
+    "raw_detail_json",
+    "raw_json",
+}
+
+RAW_DB_SHEET_HEADERS = [header for header in RAW_SHEET_HEADERS if header not in RAW_DB_OMIT_HEADERS]
+
 SHEET_HEADERS = [
     "店铺",
     "活动名称",
@@ -588,7 +599,7 @@ def enrich_raw_activity_rows(args: argparse.Namespace, day: str, rows: list[dict
 
 def raw_rows_to_sheet_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
-        {header: normalize_cell(row.get(header, "")) for header in RAW_SHEET_HEADERS}
+        {header: normalize_cell(row.get(header, "")) for header in RAW_DB_SHEET_HEADERS}
         for row in rows
     ]
 
@@ -610,9 +621,34 @@ def save_raw_activity_rows(args: argparse.Namespace, client: MaybeAIClient | Any
     target = {"uri": uri, "worksheet_name": worksheet}
     records = raw_rows_to_sheet_records(enrich_raw_activity_rows(args, day, rows))
     print(f"Writing raw SHEIN activity worksheet for {day}: uri={uri}, worksheet={worksheet}, rows={len(rows)}")
+    existing_row_count = len(records) + 1
+    try:
+        dimensions = client.post(WORKSHEET_DIMENSIONS_PATH, target, timeout=DEFAULT_MAYBEAI_API_TIMEOUT)
+        worksheets = dimensions.get("worksheets") if isinstance(dimensions, dict) else None
+        if isinstance(worksheets, list) and worksheets:
+            existing_row_count = max(existing_row_count, int(worksheets[0].get("row_count") or 0))
+    except Exception:
+        existing_row_count = len(records) + 1
+    if len(RAW_DB_SHEET_HEADERS) < len(RAW_SHEET_HEADERS):
+        legacy_clear_range = (
+            f"{excel_column_name(len(RAW_DB_SHEET_HEADERS) + 1)}1:"
+            f"{excel_column_name(len(RAW_SHEET_HEADERS))}{max(existing_row_count, 1)}"
+        )
+        clear_result = client.post(
+            "/api/v1/excel/update_range",
+            {
+                **target,
+                "range_address": legacy_clear_range,
+                "values": [["" for _ in range(len(RAW_SHEET_HEADERS) - len(RAW_DB_SHEET_HEADERS))]
+                           for _ in range(max(existing_row_count, 1))],
+            },
+            timeout=DEFAULT_MAYBEAI_API_TIMEOUT,
+        )
+        if clear_result.get("success") is False:
+            raise SyncError(f"Raw activity worksheet legacy column clear failed for {day}:\n{json.dumps(clear_result, ensure_ascii=False)}")
     header_result = client.post(
         "/api/v1/excel/update_range",
-        {**target, "range_address": f"A1:{excel_column_name(len(RAW_SHEET_HEADERS))}1", "values": [RAW_SHEET_HEADERS]},
+        {**target, "range_address": f"A1:{excel_column_name(len(RAW_DB_SHEET_HEADERS))}1", "values": [RAW_DB_SHEET_HEADERS]},
         timeout=DEFAULT_MAYBEAI_API_TIMEOUT,
     )
     if header_result.get("success") is False:

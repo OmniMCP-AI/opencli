@@ -1051,7 +1051,7 @@ async function captureFirstActivityPage(page, options) {
     const captureWithClick = async (clickText) => captureRequestViaPageTap(page, {
         pattern: ACTIVITY_LIST_API_PATTERN,
         timeoutMs: options.timeoutMs,
-        targetUrl: '',
+        targetUrl: ACTIVITY_LIST_PAGE_URL,
         clickText,
         label: 'SHEIN activity list first-page response',
     });

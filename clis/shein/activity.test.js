@@ -149,12 +149,14 @@ describe('shein activity adapter', () => {
         const page = {
             href: 'about:blank',
             gotoCalls: [],
+            evaluateCalls: [],
             goto: async (url) => {
                 page.gotoCalls.push(url);
                 page.href = url;
             },
             wait: async () => {},
             evaluate: async (script) => {
+                page.evaluateCalls.push(String(script));
                 if (String(script).includes('hasCreateRecord')) {
                     return {
                         href: page.href,
@@ -204,6 +206,7 @@ describe('shein activity adapter', () => {
         })).resolves.toEqual([]);
 
         expect(captureAttempts).toBe(3);
+        expect(page.evaluateCalls.some((script) => script.includes('https://sso.geiwohuo.com/#/mars/tools/list'))).toBe(true);
         expect(page.gotoCalls).toEqual([
             'https://sso.geiwohuo.com/#/mars/tools/list',
             'https://sso.geiwohuo.com/#/mars/tools/list',

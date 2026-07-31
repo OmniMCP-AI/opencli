@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { __test__, SHEIN_ACTIVITY_COLUMNS } from './activity.js';
+import { __test__, collectSheinActivityRows, SHEIN_ACTIVITY_COLUMNS } from './activity.js';
 
 describe('shein activity adapter', () => {
     it('resolves snapshot dates and default insert windows', () => {
@@ -142,6 +142,73 @@ describe('shein activity adapter', () => {
         expect(script).toContain('hasCreateRecord');
         expect(script).toContain('hasSearchButton');
         expect(script).toContain('创建记录');
+    });
+
+    it('recovers when the activity list page turns blank during first-page capture', async () => {
+        let captureAttempts = 0;
+        const page = {
+            href: 'about:blank',
+            gotoCalls: [],
+            goto: async (url) => {
+                page.gotoCalls.push(url);
+                page.href = url;
+            },
+            wait: async () => {},
+            evaluate: async (script) => {
+                if (String(script).includes('hasCreateRecord')) {
+                    return {
+                        href: page.href,
+                        hasCreateRecord: page.href.startsWith('https://sso.geiwohuo.com/'),
+                        hasSearchButton: false,
+                        availableTexts: page.href.startsWith('https://sso.geiwohuo.com/') ? ['营销工具创建记录托管记录'] : [],
+                    };
+                }
+                if (String(script).includes('/query_obm_activity_list')) {
+                    captureAttempts += 1;
+                    if (captureAttempts < 3) {
+                        page.href = 'about:blank';
+                        return {
+                            ok: false,
+                            reason: 'button not found: 创建记录',
+                            href: 'about:blank',
+                            availableTexts: [],
+                            captures: [],
+                            errors: [],
+                        };
+                    }
+                    return {
+                        ok: true,
+                        href: page.href,
+                        errors: [],
+                        captures: [{
+                            url: 'https://sso.geiwohuo.com/mrs-api-prefix/promotion/obm/query_obm_activity_list',
+                            requestHeaders: { Lan: 'zh-cn' },
+                            requestBodyPreview: JSON.stringify({ page_num: 1, page_size: 100, type_id: 31, system: 'mrs' }),
+                            responseStatus: 200,
+                            responsePreview: JSON.stringify({ code: 0, info: { list: [], total: 0 } }),
+                        }],
+                    };
+                }
+                return page.href;
+            },
+            fetchJson: async () => ({ code: 0, info: { list: [], total: 0 } }),
+        };
+
+        await expect(collectSheinActivityRows(page, {
+            snapshotDate: '2026-07-29',
+            maxListPages: 1,
+            maxDetailPages: 1,
+            requestTimeout: 120,
+            retryAttempts: 1,
+            retryDelayMs: 0,
+        })).resolves.toEqual([]);
+
+        expect(captureAttempts).toBe(3);
+        expect(page.gotoCalls).toEqual([
+            'https://sso.geiwohuo.com/#/mars/tools/list',
+            'https://sso.geiwohuo.com/#/mars/tools/list',
+            'https://sso.geiwohuo.com/#/mars/tools/list',
+        ]);
     });
 
     it('splits activity ids from cli strings and list rows', () => {

@@ -808,11 +808,6 @@ def row_source_day(row: dict[str, Any]) -> str:
 
 
 def effective_raw_read_days(args: argparse.Namespace) -> int:
-    overrides = set(getattr(args, "_cli_override_keys", set()) or set())
-    if "raw_read_days" in overrides:
-        return int(getattr(args, "raw_read_days", DEFAULT_RAW_READ_DAYS))
-    if getattr(args, "sheet_display_days", None) and ("sheet_display_days" in overrides or getattr(args, "raw_read_days", None) == DEFAULT_RAW_READ_DAYS):
-        return int(args.sheet_display_days)
     return int(getattr(args, "raw_read_days", DEFAULT_RAW_READ_DAYS) or DEFAULT_RAW_READ_DAYS)
 
 
@@ -872,13 +867,11 @@ def compute_missing_days(requested_days: list[str], raw_snapshot_days: set[str],
     return missing, skipped
 
 
-def display_day_set(requested_days: list[str], display_read_days: int) -> set[str]:
+def latest_requested_days(requested_days: list[str]) -> list[str]:
     if not requested_days:
-        return set()
+        return []
     normalized = [normalize_date_input(day) for day in requested_days]
-    end = max(normalized)
-    start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=max(1, display_read_days) - 1)).strftime("%Y-%m-%d")
-    return {day for day in normalized if start <= day <= end}
+    return [max(normalized)]
 
 
 def build_sheet_target(args: argparse.Namespace, client: Any) -> tuple[dict[str, str], str | None]:
@@ -1181,17 +1174,23 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         return
 
     adapter_rows: list[dict[str, Any]]
+    export_days = latest_requested_days(requested_days)
+    export_day_set = set(export_days)
+    print(f"[{getattr(args, 'store', DEFAULT_STORE)}] Sheet export day: {', '.join(export_days) if export_days else '<none>'}")
     if getattr(args, "etl_source", "fresh") == "raw-api":
         assert client is not None
-        display_read_days = effective_raw_read_days(args)
-        display_response = read_raw_api_snapshot_response(args, client, requested_days, read_days=display_read_days, purpose="sheet ETL")
-        existing_raw_rows = read_raw_api_rows(args, client, requested_days, response=display_response)
+        display_read_days = raw_read_days_for_requested_window(args, export_days)
+        display_response = read_raw_api_snapshot_response(args, client, export_days, read_days=display_read_days, purpose="sheet ETL latest day")
+        existing_raw_rows = [
+            row
+            for row in read_raw_api_rows(args, client, export_days, response=display_response)
+            if not export_day_set or row_source_day(row) in export_day_set
+        ]
         display_raw_days = extract_raw_snapshot_days(display_response)
-        requested_display_days = display_day_set(requested_days, display_read_days)
         fetched_display_rows = [
             row
             for row in fetched_rows
-            if row_source_day(row) in requested_display_days and row_source_day(row) not in display_raw_days
+            if row_source_day(row) in export_day_set and row_source_day(row) not in display_raw_days
         ]
         if fetched_display_rows:
             print(
@@ -1200,7 +1199,11 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
             )
         adapter_rows = [*existing_raw_rows, *fetched_display_rows]
     else:
-        adapter_rows = [*plan_raw_rows, *fetched_rows]
+        adapter_rows = [
+            row
+            for row in [*plan_raw_rows, *fetched_rows]
+            if not export_day_set or row_source_day(row) in export_day_set
+        ]
 
     print(
         f"[{getattr(args, 'store', DEFAULT_STORE)}] ETL source rows combined: "
@@ -1320,7 +1323,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-db-read-path", default=DEFAULT_RAW_DB_READ_PATH)
     parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS)
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh")
-    parser.add_argument("--sheet-display-days", type=int)
+    parser.add_argument("--sheet-display-days", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--skip-sheet-write", action="store_true")
     parser.add_argument("--clear-worksheet-data", action=argparse.BooleanOptionalAction, default=False)
@@ -1366,7 +1369,6 @@ def build_parser() -> argparse.ArgumentParser:
 def mark_cli_overrides(args: argparse.Namespace, argv: list[str]) -> None:
     overrides: set[str] = set()
     mapping = {
-        "--sheet-display-days": "sheet_display_days",
         "--raw-read-days": "raw_read_days",
         "--sheet-url": "sheet_url",
         "--worksheet-name": "worksheet_name",

@@ -7,7 +7,7 @@
 - 逐日检查 raw DB snapshot；
 - 缺失的店铺/日期调用 opencli 补爬；
 - 每个店每天爬完后立刻保存 raw DB；
-- 展示阶段从 display window 的 raw DB 读取、ETL、三店合并写入同一个目标 worksheet。
+- 展示阶段只读取本次 crawl/request 窗口的最新一天 raw DB snapshot，ETL 后三店合并写入同一个目标 worksheet。
 
 本设计不改 play-be。最终交付是 opencli 命令和 repo-local Python 业务脚本，可由外部调度直接执行。
 
@@ -92,7 +92,7 @@ Adapter 责任：
 - 用 raw DB snapshot 判定每个店铺/日期是否需要爬；
 - 调用 `opencli shein activity -f json` 补爬缺失日期；
 - 每个店每天爬完后立即写 raw staging worksheet，并调用 `excel__save_table_worksheet_to_mongodb`；
-- 展示阶段从 display window 的 raw DB 读取活动 raw rows；
+- 展示阶段只从最新一天 raw DB snapshot 读取活动 raw rows；
 - 做 ETL 和去重，三店合并写入同一个目标 worksheet；
 - 支持 `--skip-sheet-write` 只补 raw DB，不更新业务 Sheet；
 - 不向本地写 raw JSON 文件。
@@ -142,7 +142,6 @@ python3 scripts/sync-shein-activity-to-sheet.py \
 python3 scripts/sync-shein-activity-to-sheet.py \
   --store-config scripts/shein-activity-prod.json \
   --crawl-last-days 30 \
-  --sheet-display-days 30 \
   --etl-source raw-api \
   --raw-db \
   --ensure-headers \
@@ -286,7 +285,6 @@ raw_json
 |---|---|
 | `--start-date` / `--end-date` | crawl window。逐日检查 raw DB 和补爬。 |
 | `--crawl-last-days N` | crawl/check 最近 N 天，不能和 `--start-date` 同用。 |
-| `--sheet-display-days N` | display window。只控制最终从 raw DB 读取哪些 snapshot 并写业务 Sheet。 |
 | `--raw-read-days N` | 覆盖最终 raw DB read window。 |
 | `--store` | 写入 `店铺` 的业务名称。 |
 | `--profile` | Browser Bridge profile。一个店一个 profile。 |
@@ -305,9 +303,8 @@ raw_json
 日期窗口语义：
 
 - crawl window 用于逐日、逐店查 raw DB 和补爬；
-- display window 用于读取 raw DB snapshot、ETL、写业务 Sheet；
-- 两者必须分离。例如 `--crawl-last-days 60 --sheet-display-days 30` 表示检查 60 天 DB 缺口，但只用最近 30 天 raw snapshot 重算当前展示 Sheet。
-- 活动 Sheet 本身没有 `日期` 列；display window 的日期是 raw snapshot `data_date`，不是活动开始时间或结束时间过滤器。
+- 写表导出日固定为本次 crawl/request 窗口的最新一天。例如 `--crawl-last-days 60` 会检查 60 天 DB 缺口，但只用最新一天 raw snapshot 重算当前展示 Sheet。
+- 活动 Sheet 本身没有 `日期` 列；导出日是 raw snapshot `data_date`，不是活动开始时间或结束时间过滤器。
 - 显式历史 crawl window 的 raw DB planning read 会把 `last_n_days` 扩展到覆盖最早请求日期到昨天，再过滤回请求日期，避免补历史两天时只读“最近两天”。
 
 核心流程：
@@ -323,7 +320,7 @@ raw_json
    - 无 snapshot 则调用 `opencli shein activity --snapshotDate <day> -f json`；
    - 当天爬完立即写 raw worksheet 并调用 MongoDB save；
 5. 如果 `--skip-sheet-write`，输出 summary 后结束，不读取或写入业务 Sheet。
-6. 从 display window 的 raw DB 读取三店 raw rows。
+6. 从最新一天 raw DB snapshot 读取三店 raw rows。
 7. ETL 成 legacy 11 列，按唯一键去重。
 8. 三店合并写入同一个目标 worksheet。
 9. 写后按实际写入 row range 验证可见记录。
@@ -374,9 +371,9 @@ Skip key：
 raw-api 写表策略：
 
 - crawl planning 读取 crawl window 对应 raw DB snapshot days，缺失 store/day 才爬。
-- display 阶段读取 `--sheet-display-days` 对应 raw DB snapshots 后 ETL。
-- 当前店铺旧业务行由 display raw snapshots 重新生成并替换。
-- 若当前店 display window ETL 为 0 行，也要写回目标 Sheet：清掉当前店旧业务行，保留其他店铺行。
+- 写表阶段只读取最新一天 raw DB snapshot 后 ETL。
+- 当前店铺旧业务行由最新一天 raw snapshot 重新生成并替换。
+- 若当前店最新一天 ETL 为 0 行，也要写回目标 Sheet：清掉当前店旧业务行，保留其他店铺行。
 - 其他店铺在同一目标 worksheet 里的业务行会保留，三店顺序执行后得到合并表。
 - raw staging worksheet 每行写入 `raw_db_type` 和 `raw_key`，key 格式为 `shein_activity:<store>:<profile>:<YYYY-MM-DD>`；MongoDB save payload 同步传入该 key。
 - 成功但无活动商品详情的日期写 `record_type=empty_snapshot` 到 raw staging worksheet，再调用 MongoDB save tool，避免下次重复爬同一天。
@@ -418,7 +415,7 @@ raw-api 写表策略：
 - `read_sheet` 或 range read helper：按 `A1:K10001`、`A10002:K20001` 分块读取目标 Sheet，用于 merge/write 保留，不用于 skip；
 - `POST /api/v1/excel/update_data_keep_headers`：写业务 Sheet，`start_row=2`，保留 header；
 - `POST /api/v1/tool/function_call` + `excel__save_table_worksheet_to_mongodb`：保存每个 raw snapshot；
-- `POST /api/v1/tool/function_call` + `excel__read_recent_worksheet_snapshots`：按 raw workbook/worksheet/display window 读取 snapshot。
+- `POST /api/v1/tool/function_call` + `excel__read_recent_worksheet_snapshots`：按 raw workbook/worksheet 读取覆盖最新导出日的 snapshot。
 
 不得使用目标业务 Sheet 判断爬虫 skip。目标 Sheet 只参与 header、merge、write、verification。
 
@@ -431,8 +428,7 @@ raw-api 写表策略：
   "defaults": {
     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40",
     "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
-    "worksheet_name": "活动数据",
-    "sheet_display_days": 30
+    "worksheet_name": "活动数据"
   },
   "stores": [
     {"key": "store1", "store": "店1", "profile": "jegkb2wv", "raw_db_worksheet_name": "店1活动数据"},
@@ -476,7 +472,7 @@ Adapter 错误：
 Unit：
 
 - adapter helper 测试：date、header sanitize、list body、detail body、payload extraction、flatten、pagination stop、state/type mapping；
-- script helper 测试：date window、store config、raw snapshot skip、raw save payload、ETL mapping、dedupe、display window raw read、skip-sheet-write。
+- script helper 测试：date window、store config、raw snapshot skip、raw save payload、ETL mapping、dedupe、latest-day raw read、skip-sheet-write。
 
 Live：
 
@@ -485,7 +481,7 @@ Live：
 - dry run 不调用 MaybeAI write；
 - raw DB mode 对一个店/日期保存 snapshot；
 - rerun 同一天从 raw DB skip，不调用 opencli；
-- display window 读取 raw DB 后三店合并写同一 worksheet；
+- 最新一天 raw DB 读取后，三店合并写同一 worksheet；
 - 写后用 row range 读取验证，而不是 `filter_tokens`。
 
 ## 实施步骤
@@ -494,7 +490,7 @@ Live：
 2. 用 live profile 验证活动列表 endpoint、headers、response path。
 3. 实现详情 endpoint 分页和 raw flatten。
 4. 新增 `scripts/sync-shein-activity-to-sheet.py` 的纯 helper 和 tests。
-5. 实现 raw DB 逐日 save、raw-api read、crawl/display window 分离。
+5. 实现 raw DB 逐日 save、raw-api read、latest-day Sheet export。
 6. 实现 Sheet header、merge、write、range verification。
 7. 新增 `scripts/shein-activity-prod.json`，填入三店 profile。
 8. 更新 `docs/adapters/browser/shein.md`。

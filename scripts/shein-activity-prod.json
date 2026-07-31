@@ -5,8 +5,7 @@
     "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
     "raw_db_worksheet_suffix": "活动数据",
     "raw_db_type": "shein_activity",
-    "etl_source": "raw-api",
-    "sheet_display_days": 30
+    "etl_source": "raw-api"
   },
   "stores": [
     {

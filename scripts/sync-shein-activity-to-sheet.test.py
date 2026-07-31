@@ -268,7 +268,7 @@ class SheinActivitySyncTests(unittest.TestCase):
             with self.assertRaisesRegex(sync.SyncError, "--skip-sheet-write requires --raw-db"):
                 sync.run_sync(args, Path("."))
 
-    def test_raw_api_uses_crawl_window_for_skip_and_display_window_for_sheet_etl(self) -> None:
+    def test_raw_api_uses_crawl_window_for_skip_and_exports_latest_day_only(self) -> None:
         args = type("Args", (), {
             "store": "店1",
             "profile": "profile1",
@@ -298,6 +298,7 @@ class SheinActivitySyncTests(unittest.TestCase):
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "活动数据ETL")), \
+            mock.patch.object(sync, "default_yesterday", return_value="2026-07-04"), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]) as read_raw, \
             mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"snapshot_date": "2026-07-02", "activity_name": "fresh-02", "skc": "skc-2"}]) as fetch_rows, \
             mock.patch.object(sync, "write_sheet_records", side_effect=lambda _client, _target, records, _args: written_records.extend(records)):
@@ -306,8 +307,9 @@ class SheinActivitySyncTests(unittest.TestCase):
         self.assertEqual(fetch_rows.call_args.args[3], ["2026-07-02"])
         self.assertEqual(read_raw.call_count, 2)
         self.assertGreaterEqual(read_raw.call_args_list[0].kwargs["read_days"], 4)
-        self.assertEqual(read_raw.call_args_list[1].kwargs["read_days"], 2)
-        self.assertEqual([row["活动名称"] for row in written_records], ["display-03", "display-04"])
+        self.assertEqual(read_raw.call_args_list[1].args[2], ["2026-07-04"])
+        self.assertEqual(read_raw.call_args_list[1].kwargs["read_days"], 1)
+        self.assertEqual([row["活动名称"] for row in written_records], ["display-04"])
 
     def test_raw_api_includes_fresh_display_rows_when_raw_snapshot_read_lags(self) -> None:
         args = type("Args", (), {
@@ -341,7 +343,7 @@ class SheinActivitySyncTests(unittest.TestCase):
             mock.patch.object(sync, "write_sheet_records", side_effect=lambda _client, _target, records, _args: written_records.extend(records)):
             sync.run_sync(args, Path("."))
 
-        self.assertEqual([row["活动名称"] for row in written_records], ["display-29", "fresh-30"])
+        self.assertEqual([row["活动名称"] for row in written_records], ["fresh-30"])
 
     def test_raw_api_sheet_write_replaces_current_store_rows_and_keeps_other_stores(self) -> None:
         args = type("Args", (), {

@@ -1,4 +1,5 @@
 import { CommandExecutionError } from '@jackwener/opencli/errors';
+import { log } from '@jackwener/opencli/logger';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 
 const BASE_URL = 'https://sso.geiwohuo.com';
@@ -107,6 +108,27 @@ function asRecordArray(value) {
 function stringValue(value) {
     if (value === null || value === undefined) return '';
     return typeof value === 'string' ? value : String(value);
+}
+
+function activityLog(debug, message) {
+    if (debug) log.status(`[shein activity] ${message}`);
+    else log.verbose(`[shein activity] ${message}`);
+}
+
+function summarizeTexts(values, limit = 8) {
+    return asArray(values)
+        .map((value) => stringValue(value).replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .slice(0, limit)
+        .join(' | ');
+}
+
+function summarizePageState(state) {
+    const pageState = asObject(state);
+    const href = stringValue(pageState.href) || '<empty>';
+    const flags = `createRecord=${pageState.hasCreateRecord === true ? 'yes' : 'no'} search=${pageState.hasSearchButton === true ? 'yes' : 'no'}`;
+    const texts = summarizeTexts(pageState.availableTexts);
+    return `${href} ${flags}${texts ? ` texts=${texts}` : ''}`;
 }
 
 function scalar(value) {
@@ -614,6 +636,7 @@ async function fetchJsonWithRetry(page, url, requestOptions, label, options) {
 
 async function fetchActivityListPage(page, headers, baseBody, pageNum, options) {
     await maybeWait(page, options.requestDelayMinMs, options.requestDelayMaxMs);
+    activityLog(options.debug, `fetch list page ${pageNum}: page_size=${parsePositiveInt(options.pageSize, '--pageSize', 100)}`);
     return fetchJsonWithRetry(page, ACTIVITY_LIST_API, {
         method: 'POST',
         headers,
@@ -641,8 +664,10 @@ async function fetchActivityDetailPages(page, headers, activity, options) {
     if (!activityId) return [];
     const rows = [];
     const pageSize = parsePositiveInt(options.pageSize, '--pageSize', 100);
+    activityLog(options.debug, `fetch detail start: activity_id=${activityId}`);
     for (let pageNum = 1; pageNum <= options.maxDetailPages; pageNum++) {
         await maybeWait(page, options.requestDelayMinMs, options.requestDelayMaxMs);
+        activityLog(options.debug, `fetch detail page ${pageNum}: activity_id=${activityId} page_size=${pageSize}`);
         const payload = await fetchJsonWithRetry(page, ACTIVITY_DETAIL_API, {
             method: 'POST',
             headers: detailHeaders(headers, activityId),
@@ -652,6 +677,7 @@ async function fetchActivityDetailPages(page, headers, activity, options) {
         const rawRows = getRows(payload);
         const totalCount = getTotalCount(payload, rawRows.length);
         const knownTotalPages = getKnownTotalPages(payload, pageSize);
+        activityLog(options.debug, `detail page result: activity_id=${activityId} page=${pageNum} rows=${rawRows.length} total=${totalCount} pages=${knownTotalPages ?? '<unknown>'}`);
         if (rawRows.length === 0) {
             if (pageNum === 1 && rows.length === 0) {
                 rows.push(...flattenActivityRows(activity, [], {
@@ -698,6 +724,7 @@ async function fetchActivityRows(page, firstPageContext, options) {
     const pageSize = parsePositiveInt(options.pageSize, '--pageSize', 100);
     const requestedIds = splitActivityIds(options.activityIds);
     const activities = [];
+    activityLog(options.debug, `fetch rows start: requested_ids=${requestedIds.length} max_list_pages=${options.maxListPages} max_detail_pages=${options.maxDetailPages}`);
     if (requestedIds.length > 0) {
         activities.push(...requestedIds.map((id) => ({ activity_id: id })));
     } else {
@@ -707,6 +734,7 @@ async function fetchActivityRows(page, firstPageContext, options) {
             const rawRows = getRows(payload);
             const totalCount = getTotalCount(payload, rawRows.length);
             const knownTotalPages = getKnownTotalPages(payload, pageSize);
+            activityLog(options.debug, `list page result: page=${pageNum} rows=${rawRows.length} total=${totalCount} pages=${knownTotalPages ?? '<unknown>'}`);
             const remaining = options.limitActivities == null ? rawRows.length : Math.max(0, options.limitActivities - activities.length);
             const pageActivities = rawRows.slice(0, remaining).map((activity) => ({
                 ...activity,
@@ -722,8 +750,9 @@ async function fetchActivityRows(page, firstPageContext, options) {
     }
 
     const firstActivityId = extractActivityId(activities[0]);
+    activityLog(options.debug, `activity list collected: activities=${activities.length} first_activity_id=${firstActivityId || '<empty>'}`);
     if (firstActivityId) {
-        await ensureActivityDetailPage(page, firstActivityId);
+        await ensureActivityDetailPage(page, firstActivityId, options);
     }
 
     const detailGroups = await mapConcurrent(activities, options.detailConcurrency, async (activity) => fetchActivityDetailPages(
@@ -739,6 +768,7 @@ async function fetchActivityRows(page, firstPageContext, options) {
         },
     ));
     const rows = detailGroups.flat();
+    activityLog(options.debug, `fetch rows completed: output_rows=${rows.length}`);
     return options.limitRows == null ? rows : rows.slice(0, options.limitRows);
 }
 
@@ -979,24 +1009,31 @@ async function ensureActivityPage(page, options = {}) {
     const attempts = parsePositiveInt(options.attempts, 'activity page navigation attempts', 3);
     let lastState = {};
     for (let attempt = 1; attempt <= attempts; attempt++) {
+        activityLog(options.debug, `activity page navigation attempt ${attempt}/${attempts}: goto ${ACTIVITY_LIST_PAGE_URL}`);
         await page.goto(ACTIVITY_LIST_PAGE_URL, { waitUntil: 'none' });
         await page.wait(attempt === 1 ? 4 : 2);
         lastState = await readActivityListPageState(page);
+        activityLog(options.debug, `activity page state attempt ${attempt}/${attempts}: ${summarizePageState(lastState)}`);
         const href = stringValue(lastState.href);
-        if (href.startsWith(BASE_URL) && lastState.hasCreateRecord === true) return lastState;
+        if (href.startsWith(BASE_URL) && lastState.hasCreateRecord === true) {
+            activityLog(options.debug, `activity page ready: attempt=${attempt}`);
+            return lastState;
+        }
     }
     const href = stringValue(lastState.href);
     const availableTexts = asArray(lastState.availableTexts).join(' | ');
     throw new CommandExecutionError(`SHEIN activity list page not ready before API fetch: current=${href || '<empty>'}${availableTexts ? ` available=${availableTexts}` : ''}`);
 }
 
-async function ensureActivityDetailPage(page, activityId) {
+async function ensureActivityDetailPage(page, activityId, options = {}) {
     const normalizedActivityId = stringValue(activityId).trim();
     if (!normalizedActivityId) return;
     const targetUrl = `${BASE_URL}${ACTIVITY_DETAIL_ROUTE_PREFIX}/${encodeURIComponent(normalizedActivityId)}`;
+    activityLog(options.debug, `activity detail navigation: activity_id=${normalizedActivityId} url=${targetUrl}`);
     await page.goto(targetUrl);
     await page.wait(2);
     const href = stringValue(unwrapEvaluateResult(await page.evaluate('location.href')));
+    activityLog(options.debug, `activity detail page state: activity_id=${normalizedActivityId} href=${href || '<empty>'}`);
     if (href.includes(`/obm-time-limit-info/${encodeURIComponent(normalizedActivityId)}`)) return;
     throw new CommandExecutionError(`SHEIN activity detail navigation failed before detail fetch: current=${href || '<empty>'}`);
 }
@@ -1021,17 +1058,26 @@ async function captureFirstActivityPage(page, options) {
     const attempts = parsePositiveInt(options.captureAttempts, 'activity list capture attempts', 3);
     let lastError;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-        await ensureActivityPage(page);
+        activityLog(options.debug, `first-page capture attempt ${attempt}/${attempts}: preparing activity page`);
+        await ensureActivityPage(page, { debug: options.debug });
         try {
-            return extractActivityCaptureContext(await captureWithClick('创建记录'));
+            activityLog(options.debug, `first-page capture attempt ${attempt}/${attempts}: click 创建记录`);
+            const context = extractActivityCaptureContext(await captureWithClick('创建记录'));
+            activityLog(options.debug, `first-page capture success: click=创建记录 request=${context.requestUrl}`);
+            return context;
         } catch (error) {
             lastError = error;
+            activityLog(options.debug, `first-page capture attempt ${attempt}/${attempts} failed: ${error?.message || error}`);
             if (isCaptureTimeout(error)) {
-                await ensureActivityPage(page);
+                activityLog(options.debug, `first-page capture attempt ${attempt}/${attempts}: fallback to 搜索 after timeout`);
+                await ensureActivityPage(page, { debug: options.debug });
                 try {
-                    return extractActivityCaptureContext(await captureWithClick('搜索'));
+                    const context = extractActivityCaptureContext(await captureWithClick('搜索'));
+                    activityLog(options.debug, `first-page capture success: click=搜索 request=${context.requestUrl}`);
+                    return context;
                 } catch (searchError) {
                     lastError = searchError;
+                    activityLog(options.debug, `first-page capture fallback failed: ${searchError?.message || searchError}`);
                     if (!isBlankPageButtonFailure(searchError, '搜索') && !isCaptureTimeout(searchError)) throw searchError;
                 }
             } else if (!isBlankPageButtonFailure(error, '创建记录')) {
@@ -1042,12 +1088,15 @@ async function captureFirstActivityPage(page, options) {
     throw lastError;
 }
 
-export async function collectSheinActivityRows(page, kwargs) {
+export async function collectSheinActivityRows(page, kwargs, debug = false) {
     const timeoutMs = parsePositiveInt(kwargs.requestTimeout, '--requestTimeout', 60) * 1000;
-    const firstPageContext = await captureFirstActivityPage(page, { timeoutMs });
+    activityLog(debug, `command start: snapshotDate=${stringValue(kwargs.snapshotDate) || '<default-yesterday>'} limitActivities=${stringValue(kwargs.limitActivities) || '<none>'} maxListPages=${stringValue(kwargs.maxListPages) || '<unbounded>'} maxDetailPages=${stringValue(kwargs.maxDetailPages) || '<unbounded>'} requestTimeoutMs=${timeoutMs}`);
+    const firstPageContext = await captureFirstActivityPage(page, { timeoutMs, debug });
     const window = resolveActivityQueryWindow(kwargs, firstPageContext.body);
+    activityLog(debug, `query window resolved: snapshotDate=${window.snapshotDate} insertStartTime=${window.insertStartTime} insertEndTime=${window.insertEndTime}`);
     const options = {
         ...window,
+        debug,
         store: kwargs.store,
         profile: kwargs.profile,
         activityIds: kwargs.activityIds,

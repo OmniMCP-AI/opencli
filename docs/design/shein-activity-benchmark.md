@@ -2,7 +2,7 @@
 
 ## 目的
 
-本 benchmark 定义 `opencli shein activity` 和 `scripts/sync-shein-activity-to-sheet.py` 的验收方法。重点验证正确性、幂等、DB skip、crawl/display window 分离、多店合并、只爬不写表、性能、重试和回归测试。
+本 benchmark 定义 `opencli shein activity` 和 `scripts/sync-shein-activity-to-sheet.py` 的验收方法。重点验证正确性、幂等、DB skip、crawl window 查缺补缺、最新日导出、多店合并、只爬不写表、性能、重试和回归测试。
 
 端到端测试需要：
 
@@ -92,7 +92,6 @@ python3 scripts/sync-shein-activity-to-sheet.py \
   --etl-source raw-api \
   --start-date 2026-07-29 \
   --end-date 2026-07-29 \
-  --sheet-display-days 1 \
   --ensure-headers
 ```
 
@@ -102,7 +101,6 @@ Production three-store dry run：
 python3 scripts/sync-shein-activity-to-sheet.py \
   --store-config scripts/shein-activity-prod.json \
   --crawl-last-days 30 \
-  --sheet-display-days 30 \
   --etl-source raw-api \
   --raw-db \
   --skip-sheet-write
@@ -206,7 +204,7 @@ Pass：
 
 Pass：
 
-- summary 包含 crawl window、display window、store、profile、fetched/skipped day count、raw row count、ETL row count；
+- summary 包含 crawl window、Sheet export day、store、profile、fetched/skipped day count、raw row count、ETL row count；
 - sample ETL row 只有 11 个 legacy header；
 - `活动规格` 映射 `31/1/2/9/21`；
 - `状态` 映射 `3/4/5/6`；
@@ -282,7 +280,7 @@ Pass：
 - 新 snapshot 保存成功；
 - display ETL 去重后不因重复 snapshot 产生重复业务行。
 
-## Crawl/Display 分离验收
+## Crawl Window 与最新日导出验收
 
 运行：
 
@@ -290,26 +288,25 @@ Pass：
 python3 scripts/sync-shein-activity-to-sheet.py \
   --store-config scripts/shein-activity-prod.json \
   --crawl-last-days 60 \
-  --sheet-display-days 30 \
   --etl-source raw-api \
   --raw-db \
-  --skip-sheet-write
+  --ensure-headers
 ```
 
 Pass：
 
 - crawl planning 读取 60 天 raw DB snapshot；
 - 每一天、每个店独立判断 skip/fetch；
-- display read 只读取 30 天 raw DB snapshot；
-- 日志分别打印 crawl window 和 display window；
-- display window 不反向减少 crawl window。
+- Sheet export day 为本次 crawl window 的最新一天；
+- 写表 ETL 只读取/保留最新一天 raw DB snapshot；
+- 导出最新一天不反向减少 crawl window。
 
 Record：
 
 | Metric | Value |
 |---|---|
 | crawl days checked | |
-| display days read | |
+| sheet export day | |
 | missing days fetched | |
 | skipped days | |
 
@@ -467,7 +464,7 @@ Date window:
 - Adapter correctness:
 - Raw DB save:
 - DB skip:
-- Crawl/display separation:
+- Crawl window/latest-day export:
 - Sheet write:
 - Multi-store:
 - Performance:
@@ -484,7 +481,7 @@ Date window:
 | Dry run | | |
 | First raw save | | |
 | Rerun DB skip | | |
-| Crawl/display split | | |
+| Crawl window/latest-day export | | |
 | Multi-store merge | | |
 | Skip sheet write | | |
 | Sheet write | | |
@@ -505,7 +502,7 @@ Date window:
 - adapter 能用已登录 profile 返回结构正确的活动 raw rows；
 - raw DB save 按店铺/日期一天一次执行，0 row snapshot 也可保存；
 - rerun skip 只由 raw DB snapshot 决定；
-- crawl window 和 display window 分离；
+- crawl window 查缺补缺，写表只导出最新一天；
 - `--skip-sheet-write` 不读写业务 Sheet；
 - 三店数据合并进同一个 target worksheet；
 - Sheet header 是 legacy 11 列且无 raw JSON 字段；

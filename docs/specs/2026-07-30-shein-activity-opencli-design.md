@@ -31,7 +31,7 @@
 - OpenCLI adapter 只处理 SHEIN 页面会话、接口捕获、分页复放和 raw-shaped JSON 输出。
 - Python 业务脚本处理 `whoami/login` 预检、OpenCLI 子进程重试、raw DB 保存、raw DB 读回、ETL、merge 和 `update_data_keep_headers` 写表。
 - 是否爬取由 raw DB `店铺 + 日期` 快照决定，不由目标业务 Sheet 行决定。
-- `--crawl-last-days`/crawl window 和 `--sheet-display-days`/display window 可以分离。
+- `--crawl-last-days`/crawl window 只控制 raw DB 查缺补缺；业务 Sheet 每次只导出本次窗口最新一天。
 - `--skip-sheet-write` 支持只爬取和保存 raw DB，不写业务 Sheet。
 
 仓库及相邻目录 `rg "shein_activity_analysis_data|activity_analysis"` 命中关键线索：
@@ -72,13 +72,13 @@
 
 推荐整体流程：
 
-1. 业务脚本解析 store config、crawl window、display window、目标 Sheet URL、raw DB 配置。
+1. 业务脚本解析 store config、crawl window、目标 Sheet URL、raw DB 配置。
 2. 对每个店铺按顺序处理；一个店铺只使用一个 Chrome/OpenCLI profile。
 3. 对 crawl window 内每一天，先读 raw DB 快照索引，判断该 `店铺 + 日期` 是否已有 raw snapshot。
 4. 已有 raw snapshot 的日期跳过 OpenCLI 爬取。
 5. 缺失 raw snapshot 的日期调用 `opencli shein activity` 抓取活动列表和商品详情。
 6. 每个缺失日期抓完后，立即把该店该日期的 raw 行写入 raw staging worksheet，并调用保存到 MongoDB 的 API；一天一次保存。
-7. display 阶段一次性读取 display window 内的 raw DB 快照。
+7. 写表阶段一次性读取本次窗口最新一天的 raw DB 快照。
 8. 业务脚本把 raw activity list + raw detail rows 做 ETL，生成目标业务表头。
 9. 三个店铺最终合并写入目标 Sheet；同一目标 URL 的 `gid` 决定写入 worksheet。
 10. `--skip-sheet-write` 时跳过第 8 步之后的业务 Sheet merge/write，但仍执行缺失日期爬取和 raw DB 保存。
@@ -149,7 +149,6 @@ header 复放策略：
 python3 scripts/sync-shein-activity-to-sheet.py \
   --store-config scripts/shein-activity-prod.json \
   --crawl-last-days 60 \
-  --sheet-display-days 30 \
   --sheet-url "https://www.maybe.ai/docs/spreadsheets/d/<doc-id>?gid=<gid>"
 ```
 
@@ -160,7 +159,6 @@ python3 scripts/sync-shein-activity-to-sheet.py \
   --store 店1 \
   --profile jegkb2wv \
   --crawl-last-days 7 \
-  --sheet-display-days 7 \
   --sheet-url "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40" \
   --dry-run
 ```
@@ -175,7 +173,6 @@ python3 scripts/sync-shein-activity-to-sheet.py \
 - `--worksheet-name <name>`：可选 worksheet override；当 `--sheet-url` 带 gid 时优先用 gid 解析。
 - `--crawl-last-days <n>`：crawl window，逐日检查 raw DB。
 - `--start-date <date>` / `--end-date <date>`：显式 crawl window。
-- `--sheet-display-days <n>`：display window，最终只读取/展示最近 N 天 raw snapshot。
 - `--raw-read-days <n>`：覆盖最终 raw DB 读取窗口。
 - `--skip-existing-days` / `--no-skip-existing-days`：默认 true；只看 raw DB。
 - `--skip-sheet-write`：只爬取并保存 raw DB，不写目标 Sheet；必须同时启用 `--raw-db`，避免只爬不保存。
@@ -191,8 +188,7 @@ python3 scripts/sync-shein-activity-to-sheet.py \
   "defaults": {
     "sheet_url": "https://www.maybe.ai/docs/spreadsheets/d/<target-doc>?gid=<activity-gid>",
     "raw_db_uri": "https://www.maybe.ai/docs/spreadsheets/d/6a6b38cac5b0a12620ef6c91",
-    "worksheet_name": "活动数据ETL",
-    "sheet_display_days": 30
+    "worksheet_name": "活动数据ETL"
   },
   "stores": [
     {"key": "store1", "store": "店1", "profile": "jegkb2wv", "raw_db_worksheet_name": "店1活动数据"},
@@ -255,8 +251,8 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 
 - crawl planning 读取完整 crawl window 的 raw snapshot days。
 - 对显式历史 crawl window，planning read 的 `last_n_days` 需要覆盖最早请求日期到昨天，再过滤回请求日期，不能只传请求天数。
-- display 写表前一次性读取 display window 的 raw DB 快照。
-- 示例：`--crawl-last-days 60 --sheet-display-days 30` 应先检查 60 天 raw DB 缺失日期，只爬缺失日期；写表时读取最近 30 天 raw DB，ETL 后把 3 个店合并写入目标 Sheet。
+- 写表前一次性读取本次 crawl/request 窗口最新一天的 raw DB 快照。
+- 示例：`--crawl-last-days 60` 应先检查 60 天 raw DB 缺失日期，只爬缺失日期；写表时只读取最新一天 raw DB，ETL 后把 3 个店合并写入目标 Sheet。
 
 ## Sheet 写入策略
 
@@ -269,13 +265,13 @@ shein_activity:<store>:<profile>:<YYYY-MM-DD>
 
 写入规则：
 
-- 三个店铺读取各自 display window raw DB 后，ETL 合并写入同一个目标 worksheet。
+- 三个店铺读取各自最新一天 raw DB 后，ETL 合并写入同一个目标 worksheet。
 - 使用 `update_data_keep_headers`，从第 2 行写入，保留表头。
 - 支持 `--ensure-headers` 重写 header row。
 - 支持 `--clear-worksheet-data`，但默认不应依赖“店1先清表、店2/店3追加”的旧调度语义。
 - 默认按唯一键 merge，避免重复行。
 - 由于 legacy 活动表没有日期列，`--etl-source raw-api` 写表时应刷新当前店铺业务行并保留其他店铺业务行；三店顺序执行后目标 worksheet 是三店合并结果。
-- 当前店 display window ETL 为 0 行时也必须写回目标 Sheet，清除当前店旧行并保留其他店铺行。
+- 当前店最新一天 ETL 为 0 行时也必须写回目标 Sheet，清除当前店旧行并保留其他店铺行。
 - 推荐业务唯一键：
 
 ```text
@@ -368,7 +364,7 @@ sku_info_list_json, raw_json
 - `活动规格` 是否只支持 `type_id=31/1/2/9/21`，其他 type 是否原样保留。
 - `状态` 的 `state=3/4/5/6` 映射是否完整。
 - `活动终止时间` 在 raw list 里未稳定出现时是否允许为空。
-- 源站活动列表查询窗口是否应固定最近 6 个月，还是跟业务脚本的 crawl day/display window 绑定。
+- 源站活动列表查询窗口是否应固定最近 6 个月，还是跟业务脚本的 crawl day 绑定。
 - 缺失历史 `data_date` 时，是否允许用当前 SHEIN 活动状态补写过去 raw snapshot；若不允许，历史缺失日期应报错或只跳过。
 
 ## 验收标准
@@ -382,7 +378,7 @@ sku_info_list_json, raw_json
   - `store3/w2db43wa`
 - 默认 skip 逻辑只看 raw DB `店铺 + 日期` 快照；目标业务 Sheet 行不能触发爬取 skip。
 - crawl window 内逐日检查 raw DB，缺失日期逐日 OpenCLI 爬取并立即保存 raw DB。
-- 支持 `--crawl-last-days 60 --sheet-display-days 30`，爬取检查 60 天，写表只展示 30 天。
+- 支持 `--crawl-last-days 60`，爬取检查 60 天，写表只导出最新一天。
 - 支持 `--sheet-url` 指定目标表，且 gid 正确决定 worksheet。
 - 支持 `--skip-sheet-write` 只爬不写业务 Sheet。
 - 目标 Sheet 写入使用 `update_data_keep_headers`，保留表头，从第 2 行写数据。
@@ -395,8 +391,7 @@ sku_info_list_json, raw_json
 - 活动数据的业务“日期”到底是快照日期、活动创建日期、活动开始日期，还是源站查询窗口日期？
 - 新业务脚本是否需要完全复刻旧 play-be 的“先活动列表、再商品详情”输出，还是要补上旧常量里存在但当前未使用的 marketing tool 数据？
 - 生产目标 Sheet URL、raw DB URI、worksheet 名称是否已有固定值。
-- display window 的“最近 N 天”应按 `data_date`、`活动开始时间` 还是 `活动结束时间` 排序裁剪。
 - 对历史缺失 raw snapshot 是否允许补爬当前状态，或必须只从已有 DB 快照 ETL。
-- 活动列表接口默认沿用旧模板的最近 6 个月窗口；业务上是否需要改成 crawl day 当天或 display/crawl window 整体区间仍需确认。
+- 活动列表接口默认沿用旧模板的最近 6 个月窗口；业务上是否需要改成 crawl day 当天仍需确认。
 - 详情接口默认可参考旧模板并发 5；SHEIN 风控下是否需要降为串行、配置化延迟或 profile 级限流仍需 live benchmark 确认。
 - 旧 ref-crawler 中店1清表、店2/店3追加的行为是否已废弃；本 spec 建议废弃，改为三店统一 merge。

@@ -320,6 +320,23 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         for forbidden in ["每日流量明细JSON", "活动信息JSON", "权益活动JSON", "原始JSON", "raw_json"]:
             self.assertNotIn(forbidden, record)
 
+    def test_quality_and_return_metrics_default_to_zero_when_blank(self) -> None:
+        record = sync.adapter_row_to_record({
+            "date": "2026-07-08",
+            "spu": "spu-1",
+            "skc": "skc-1",
+            "goods_uv_idx": "",
+            "eps_uv_idx": "",
+            "total_comment_cnt": "",
+            "bad_comment_cnt": "",
+            "bad_comment_rate": "",
+            "return_order_cnt": "",
+            "return_qty": "",
+        }, "店3")
+
+        for header in ["点击率", "商品评价数", "差评数", "差评率", "退货订单数", "退货件数"]:
+            self.assertEqual(record[header], 0)
+
     def test_maps_zero_sale_flag_to_legacy_non_sale_status(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

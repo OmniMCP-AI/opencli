@@ -196,6 +196,7 @@ Pass:
 - sample ETL row contains target sheet headers only;
 - sample ETL row has no JSON blob fields;
 - `点击率` equals `商品访客（访问） / 商品页面访客` when denominator is non-zero;
+- `商品评价数`, `差评数`, `差评率`, `退货订单数`, and `退货件数` are populated from raw source fields when available;
 - `商品当前状态`, `上架状态`, `是否新品`, and `是否多色` are mapped to business text.
 
 Record:
@@ -240,9 +241,9 @@ Run against an ETL worksheet with more than 10,000 rows, such as a 30-day multi-
 
 Pass:
 
-- the initial existing-row read uses explicit row ranges, starting with `A1:AD10001`;
+- the initial existing-row read uses explicit row ranges, starting with `A1:AJ10001`;
 - the script calls `/api/v1/excel_v2/worksheet/dimensions` before the range reads;
-- additional chunks continue as `A10002:AD20001`, `A20002:AD30001`, and so on, capped by the dimensions row count;
+- additional chunks continue as `A10002:AJ20001`, `A20002:AJ30001`, and so on, capped by the dimensions row count;
 - the script does not probe ranges beyond the dimensions row count;
 - old dates beyond the first 10,000 returned rows are still available for `--skip-existing-days`;
 - no `filter_tokens` are sent to MaybeAI `read_sheet`.

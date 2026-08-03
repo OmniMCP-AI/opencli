@@ -142,6 +142,37 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(saved, [("2026-07-01", [{"date": "2026-07-01", "skc": "skc-2026-07-01"}])])
 
+    def test_raw_api_mode_saves_raw_rows_when_raw_db_is_enabled(self) -> None:
+        args = type("Args", (), {
+            "raw_db": True,
+            "dry_run": False,
+            "etl_source": "raw-api",
+        })()
+
+        self.assertTrue(sync.should_save_raw_daily_rows(args, object()))
+
+    def test_raw_api_fetch_and_save_logs_raw_db_save_progress(self) -> None:
+        args = type("Args", (), {
+            "store": "店3",
+            "raw_db": True,
+            "dry_run": False,
+            "etl_source": "raw-api",
+        })()
+        saved: list[tuple[str, list[dict]]] = []
+
+        with mock.patch.object(sync, "build_opencli_base", return_value=["opencli"]), \
+            mock.patch.object(sync, "ensure_shein_session"), \
+            mock.patch.object(sync, "fetch_shein_rows_for_day", return_value=[{"date": "2026-08-02", "skc": "skc-1"}]), \
+            mock.patch.object(sync, "save_raw_daily_rows", side_effect=lambda _args, _client, day, rows: saved.append((day, rows))), \
+            mock.patch("builtins.print") as print_mock:
+            rows = sync.fetch_and_save_shein_rows(args, Path("."), object(), ["2026-08-02"])
+
+        self.assertEqual(rows, [{"date": "2026-08-02", "skc": "skc-1"}])
+        self.assertEqual(saved, [("2026-08-02", [{"date": "2026-08-02", "skc": "skc-1"}])])
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Raw DB save started 1/1 (100.0%) day=2026-08-02, rows=1", printed)
+        self.assertIn("Raw DB save completed 1/1 (100.0%) day=2026-08-02, rows=1", printed)
+
     def test_skip_sheet_write_still_fetches_without_etl_sheet_io(self) -> None:
         args = type("Args", (), {
             "store": "店3",

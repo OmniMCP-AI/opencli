@@ -667,7 +667,7 @@ def fetch_shein_rows(args: argparse.Namespace, repo_root: Path, missing_days: li
 
 
 def should_save_raw_daily_rows(args: argparse.Namespace, client: Any) -> bool:
-    return bool(client is not None and args.etl_source != "raw-api" and args.raw_db and not args.dry_run)
+    return bool(client is not None and args.raw_db and not args.dry_run)
 
 
 def fetch_and_save_shein_rows(args: argparse.Namespace, repo_root: Path, client: Any, missing_days: list[str]) -> list[dict[str, Any]]:

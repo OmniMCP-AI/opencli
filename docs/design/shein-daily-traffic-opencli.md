@@ -352,15 +352,16 @@ The MongoDB uniqueness boundary is the save tool input: raw workbook document, w
 
 ## Sheet ETL
 
-Target headers match the legacy SHEIN daily traffic worksheet at `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41`. Raw source data, including detailed scalar fields and JSON payloads, is stored in the raw DB worksheet and can be read back for future re-ETL.
+Target headers extend the legacy SHEIN daily traffic worksheet at `https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41`. The legacy worksheet has 30 columns and does not include `点击率` or comment/bad-review/return metrics, so the ETL sheet adds those business columns while keeping the original order around the existing fields. Raw source data, including detailed scalar fields and JSON payloads, is stored in the raw DB worksheet and can be read back for future re-ETL.
 
 ```text
 站点,店铺,日期,商品编号,商品,商品当前状态,规格编号,规格名称,
 规格当前状态,商品货号,主商品货号,商品访客（访问）,商品页面访客,
-跳出商品页面的访客数,商品跳出率,搜索点击数,赞,
+点击率,跳出商品页面的访客数,商品跳出率,搜索点击数,赞,
 商品访客（添加至购物车）,件数 (加入购物车）,转化率 (加入购物车率),
 买家数（已下单）,件数（已下单）,销售额（已下单）,转化率（已下单）,
-买家数（已确认订单）,件数（已确认订单）,一级分类,二级分类,三级分类,四级分类
+买家数（已确认订单）,件数（已确认订单）,商品评价数,差评数,差评率,
+退货订单数,退货件数,一级分类,二级分类,三级分类,四级分类
 ```
 
 Derived fields:
@@ -371,10 +372,16 @@ Derived fields:
 | `店铺` | script `--store` |
 | `日期` | adapter `date` |
 | `商品当前状态` | map `sale_flag`: `1 -> 在售`, `0 -> 非在售`, otherwise preserve source text such as `下架` |
+| `点击率` | `goods_uv_idx / eps_uv_idx` when denominator is non-zero |
 | `件数（已下单）` | `pay_order_cnt`, blank source becomes `0` |
 | `件数（已确认订单）` | `sale_cnt`, blank source becomes `0` |
+| `商品评价数` | `total_comment_cnt` |
+| `差评数` | `bad_comment_cnt` |
+| `差评率` | `bad_comment_rate` |
+| `退货订单数` | `return_order_cnt` |
+| `退货件数` | `return_qty` |
 
-All other final ETL sheet fields map directly from adapter output. Query dates, image URL, supplier SKU, status flags, click rate, rating counts, return metrics, campaign metadata, `store_name`, and JSON payloads stay in the raw DB worksheet for future re-ETL.
+All other final ETL sheet fields map directly from adapter output. Query dates, image URL, supplier SKU, status flags, campaign metadata, `store_name`, and JSON payloads stay in the raw DB worksheet for future re-ETL.
 
 Unique key:
 
@@ -412,8 +419,8 @@ Write verification:
 
 - Only fetched days with at least one ETL row are verified. A source day with zero SHEIN rows is written/saved as raw data when requested, but it is not required to appear in the ETL Sheet.
 - Crawl skip decisions come from raw DB snapshots. Target ETL Sheet reads are for merge/write preservation only.
-- Full ETL Sheet reads first call `/api/v1/excel_v2/worksheet/dimensions` for the used row count, then read row ranges in chunks of 10,000 data rows: `A1:AD10001`, then `A10002:AD20001`, capped at the dimensions row count. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets, without probing empty ranges.
-- Verification reads back the expected written row with a one-row range such as `A4:AD4`. It does not use MaybeAI `filter_tokens`, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
+- Full ETL Sheet reads first call `/api/v1/excel_v2/worksheet/dimensions` for the used row count, then read row ranges in chunks of 10,000 data rows: `A1:AJ10001`, then `A10002:AJ20001`, capped at the dimensions row count. This is used before skip/merge so old dates are not missed in 30-day multi-store worksheets, without probing empty ranges.
+- Verification reads back the expected written row with a one-row range such as `A4:AJ4`. It does not use MaybeAI `filter_tokens`, because Base-only `read_sheet` currently returns `unsupported_filter_read`.
 - These range reads avoid false failures when an unbounded `read_sheet` returns only a capped date-desc slice.
 
 ## Test Design

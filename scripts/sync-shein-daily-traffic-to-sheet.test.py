@@ -24,8 +24,8 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             *[[row.get(header, "") for header in sync.SHEET_HEADERS] for row in rows],
         ]
 
-    def test_sheet_headers_match_legacy_play_be_output_without_json_columns(self) -> None:
-        legacy_headers_without_json = [
+    def test_sheet_headers_include_traffic_quality_and_return_metrics_without_json_columns(self) -> None:
+        expected_headers_without_json = [
             "站点",
             "店铺",
             "日期",
@@ -39,6 +39,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "主商品货号",
             "商品访客（访问）",
             "商品页面访客",
+            "点击率",
             "跳出商品页面的访客数",
             "商品跳出率",
             "搜索点击数",
@@ -52,13 +53,18 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "转化率（已下单）",
             "买家数（已确认订单）",
             "件数（已确认订单）",
+            "商品评价数",
+            "差评数",
+            "差评率",
+            "退货订单数",
+            "退货件数",
             "一级分类",
             "二级分类",
             "三级分类",
             "四级分类",
         ]
 
-        self.assertEqual(sync.SHEET_HEADERS, legacy_headers_without_json)
+        self.assertEqual(sync.SHEET_HEADERS, expected_headers_without_json)
         for forbidden in ["每日流量明细JSON", "活动信息JSON", "权益活动JSON", "原始JSON"]:
             self.assertNotIn(forbidden, sync.SHEET_HEADERS)
 
@@ -256,7 +262,11 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "eps_uv_idx": 40,
             "pay_order_cnt": "",
             "sale_cnt": "",
+            "total_comment_cnt": 11,
             "bad_comment_cnt": 4,
+            "bad_comment_rate": 0.2,
+            "return_order_cnt": 3,
+            "return_qty": 5,
             "prom_names": "活动A | 活动B",
             "prom_ids": "100 | 200",
             "raw_json": {"should": "not leak"},
@@ -267,8 +277,14 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(record["日期"], "2026-07-08")
         self.assertEqual(record["商品"], "Kitchen Rack")
         self.assertEqual(record["商品当前状态"], "在售")
+        self.assertEqual(record["点击率"], 0.25)
         self.assertEqual(record["件数（已下单）"], 0)
         self.assertEqual(record["件数（已确认订单）"], 0)
+        self.assertEqual(record["商品评价数"], 11)
+        self.assertEqual(record["差评数"], 4)
+        self.assertEqual(record["差评率"], 0.2)
+        self.assertEqual(record["退货订单数"], 3)
+        self.assertEqual(record["退货件数"], 5)
         self.assertEqual(set(record), set(sync.SHEET_HEADERS))
         for forbidden in ["每日流量明细JSON", "活动信息JSON", "权益活动JSON", "原始JSON", "raw_json"]:
             self.assertNotIn(forbidden, record)
@@ -813,12 +829,12 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                 if path == "/api/v1/excel_v2/worksheet/dimensions":
                     return {"data": {"row_count": 5}}
                 range_address = payload.get("range_address")
-                if range_address == "A1:AD3":
+                if range_address == "A1:AJ3":
                     return {"values": self.sheet_values([
                         {"店铺": "店1", "日期": "2026-07-30", "商品货号": "row-1"},
                         {"店铺": "店1", "日期": "2026-07-29", "商品货号": "row-2"},
                     ])}
-                if range_address == "A4:AD5":
+                if range_address == "A4:AJ5":
                     return {"values": self.sheet_values([
                         {"店铺": "店1", "日期": "2026-07-28", "商品货号": "row-3"},
                         {"店铺": "店1", "日期": "2026-07-27", "商品货号": "row-4"},
@@ -845,7 +861,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "gid": "3",
             "sheet_id": "3",
         })
-        self.assertEqual([payload["range_address"] for payload in client.payloads[1:]], ["A1:AD3", "A4:AD5"])
+        self.assertEqual([payload["range_address"] for payload in client.payloads[1:]], ["A1:AJ3", "A4:AJ5"])
 
     def test_read_worksheet_row_count_retries_dimensions_with_gid_only_payload(self) -> None:
         class FakeClient:
@@ -904,7 +920,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                         "source_info": {"reason": "unsupported_filter_read"},
                         "message": "Base-only read_sheet does not yet support workbook/filter projection semantics",
                     }
-                if payload.get("range_address") == "A4:AD4":
+                if payload.get("range_address") == "A4:AJ4":
                     return {"values": self.sheet_values([
                         {"店铺": "店1", "日期": "2026-07-01", "商品货号": "old-day"},
                     ])[1:]}
@@ -923,7 +939,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         sync.verify_written_days(client, {"uri": "sheet", "worksheet_name": "每日流量ETL"}, args, display_records, ["2026-07-01"])
 
         self.assertEqual(client.payloads[0].get("filter_tokens"), None)
-        self.assertEqual(client.payloads[0]["range_address"], "A4:AD4")
+        self.assertEqual(client.payloads[0]["range_address"], "A4:AJ4")
 
     def test_sheet_display_days_keeps_recent_window_across_stores(self) -> None:
         records = [

@@ -1085,6 +1085,38 @@ def merge_records_by_unique_key(existing_records: list[dict[str, Any]], fresh_re
     return [merged_by_key[key] for key in key_order]
 
 
+def display_day_set_from_requested_days(requested_days: list[str], sheet_display_days: Any) -> set[str]:
+    display_days = positive_int_or_none(sheet_display_days, "--sheet-display-days")
+    if display_days is None:
+        return set()
+    return {normalize_date_input(day) for day in requested_days[-display_days:]}
+
+
+def remove_store_records_for_days(
+    records: list[dict[str, Any]],
+    store: str,
+    days: set[str],
+) -> tuple[list[dict[str, Any]], int]:
+    if not days:
+        return list(records), 0
+
+    kept: list[dict[str, Any]] = []
+    removed = 0
+    for record in records:
+        normalized = normalize_sheet_record(record)
+        record_store = str(normalized.get("店铺", "")).strip()
+        try:
+            record_day = normalize_date_input(normalized.get("日期"))
+        except SyncError:
+            kept.append(record)
+            continue
+        if record_store == store and record_day in days:
+            removed += 1
+            continue
+        kept.append(record)
+    return kept, removed
+
+
 def sort_records_for_write(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(records, key=lambda record: (
         -int(str(record.get("日期", "0000-00-00")).replace("-", "") or "0"),
@@ -1944,7 +1976,19 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     assert client is not None and target is not None
     print(f"[{args.store}] Step 6/6: writing ETL sheet.")
     ensure_headers(args, client, target)
-    merged_records = records if args.clear_worksheet_data else merge_records_by_unique_key(existing_records, records)
+    existing_records_for_merge = existing_records
+    if not args.clear_worksheet_data and args.etl_source == "raw-api" and args.sheet_display_days:
+        replacement_days = display_day_set_from_requested_days(requested_days, args.sheet_display_days)
+        existing_records_for_merge, removed_count = remove_store_records_for_days(
+            existing_records,
+            args.store,
+            replacement_days,
+        )
+        print(
+            f"[{args.store}] Replacing existing sheet rows for current store display window: "
+            f"days={len(replacement_days)}, removed_rows={removed_count}."
+        )
+    merged_records = records if args.clear_worksheet_data else merge_records_by_unique_key(existing_records_for_merge, records)
     merged_records = sort_records(merged_records)
     display_records = filter_records_for_sheet_display(merged_records, requested_days, args.sheet_display_days)
     if args.sheet_display_days:

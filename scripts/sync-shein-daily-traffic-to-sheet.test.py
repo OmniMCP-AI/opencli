@@ -275,6 +275,35 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(read_raw.call_args_list[1].kwargs["read_days"], 2)
         self.assertEqual({row["商品货号"] for row in written_records}, {"display-03", "display-04"})
 
+    def test_raw_api_replaces_only_current_store_display_window_rows(self) -> None:
+        requested_days = ["2026-07-01", "2026-07-02", "2026-07-03"]
+        existing_records = [
+            {"店铺": "店3", "日期": "2026-07-02", "商品货号": "old-store3-02"},
+            {"店铺": "店3", "日期": "2026-07-03", "商品货号": "old-store3-03"},
+            {"店铺": "店2", "日期": "2026-07-03", "商品货号": "keep-store2-03"},
+            {"店铺": "店3", "日期": "2026-07-01", "商品货号": "keep-store3-01"},
+        ]
+        fresh_records = [
+            {"店铺": "店3", "日期": "2026-07-02", "商品货号": "new-store3-02"},
+            {"店铺": "店3", "日期": "2026-07-03", "商品货号": "new-store3-03"},
+        ]
+
+        replacement_days = sync.display_day_set_from_requested_days(requested_days, 2)
+        filtered_existing, removed_count = sync.remove_store_records_for_days(existing_records, "店3", replacement_days)
+        display_records = sync.filter_records_for_sheet_display(
+            sync.merge_records_by_unique_key(filtered_existing, fresh_records),
+            requested_days,
+            2,
+        )
+
+        self.assertEqual(removed_count, 2)
+        self.assertEqual(
+            {row["商品货号"] for row in display_records},
+            {"keep-store2-03", "new-store3-02", "new-store3-03"},
+        )
+        self.assertNotIn("old-store3-02", {row["商品货号"] for row in display_records})
+        self.assertNotIn("old-store3-03", {row["商品货号"] for row in display_records})
+
     def test_maps_adapter_rows_to_business_sheet_records_without_json_columns(self) -> None:
         record = sync.adapter_row_to_record({
             "date": "2026-07-08",

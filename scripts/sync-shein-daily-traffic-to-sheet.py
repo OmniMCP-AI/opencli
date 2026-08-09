@@ -24,8 +24,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import maybeai_base_sync as base_sync
 
-DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=0"
+
+DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
 DEFAULT_MAYBEAI_API_TIMEOUT = 300
 DEFAULT_MAYBEAI_API_ATTEMPTS = 3
@@ -1306,6 +1308,34 @@ def write_raw_worksheet_for_day(args: argparse.Namespace, client: "MaybeAIClient
     if not uri:
         raise SyncError("--raw-db requires a raw DB staging URI.")
     worksheet_name = raw_db_worksheet_name(args, args.store)
+    try:
+        resolved_target = base_sync.resolve_target(client, uri, worksheet_name)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    records = raw_rows_to_sheet_records(rows)
+    if not records:
+        records = [{header: "" for header in RAW_SHEET_HEADERS}]
+    if resolved_target.engine == "base":
+        try:
+            base_sync.require_base_compatible_options(
+                resolved_target,
+                read_range=None,
+                ensure_headers=False,
+            )
+            snapshot = base_sync.read_snapshot(client, resolved_target)
+            writable_records = snapshot.records_from_rows(records)
+            result = base_sync.replace_snapshot(client, snapshot, writable_records)
+        except base_sync.BaseSyncError as error:
+            raise SyncError(str(error)) from error
+        if result.get("success") is False:
+            raise SyncError(f"Raw Base worksheet write failed for {day}:\n{json.dumps(result, ensure_ascii=False)}")
+        print(
+            "Writing raw SHEIN daily traffic Base table: "
+            f"day={day}, document_id={resolved_target.document_id}, gid={resolved_target.gid}, "
+            f"table_id={resolved_target.table_id}, rows={len(records)}"
+        )
+        return resolved_target.uri, resolved_target.worksheet_name
+
     target = {"uri": uri, "worksheet_name": worksheet_name}
     header_range = f"A1:{RAW_LAST_COLUMN}1"
     print(f"Writing raw SHEIN daily traffic worksheet for {day}: uri={uri}, worksheet={worksheet_name}, rows={len(rows)}")
@@ -1313,9 +1343,6 @@ def write_raw_worksheet_for_day(args: argparse.Namespace, client: "MaybeAIClient
     if header_result.get("success") is False:
         raise SyncError(f"Raw worksheet header update failed for {day}:\n{json.dumps(header_result, ensure_ascii=False)}")
 
-    records = raw_rows_to_sheet_records(rows)
-    if not records:
-        records = [{header: "" for header in RAW_SHEET_HEADERS}]
     write_result = client.post("/api/v1/excel/update_data_keep_headers", {
         **target,
         "data": records,
@@ -1576,6 +1603,13 @@ def build_sheet_target(args: argparse.Namespace, client: MaybeAIClient) -> tuple
     return target, worksheet_name
 
 
+def resolve_write_target(args: argparse.Namespace, client: MaybeAIClient) -> base_sync.Target:
+    try:
+        return base_sync.resolve_target(client, args.sheet_url, args.worksheet_name)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+
+
 def build_worksheet_dimensions_payload(target: dict[str, Any]) -> dict[str, Any]:
     uri = str(target.get("uri", "") or "").strip()
     if not uri:
@@ -1797,6 +1831,61 @@ def write_sheet_records(client: MaybeAIClient, target: dict[str, Any], records: 
     }, ensure_ascii=False))
 
 
+def write_resolved_target(
+    client: MaybeAIClient,
+    target: base_sync.Target,
+    snapshot: base_sync.Snapshot,
+    records: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    if target.engine != "base":
+        raise SyncError("write_resolved_target requires a Base target")
+    try:
+        base_sync.require_base_compatible_options(
+            target,
+            read_range=getattr(args, "read_range", None),
+            ensure_headers=bool(getattr(args, "ensure_headers", False)),
+        )
+        writable_records = snapshot.records_from_rows(records)
+        result = base_sync.replace_snapshot(client, snapshot, writable_records)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    return {
+        "success": result.get("success", True),
+        "write_api": "table_record_replace",
+        "engine": "base",
+        "document_id": target.document_id,
+        "gid": target.gid,
+        "table_id": target.table_id,
+        "expected_revision": snapshot.revision,
+        "revision": result.get("revision"),
+        "rows": len(records),
+    }
+
+
+def verify_base_written_days(
+    client: MaybeAIClient,
+    target: base_sync.Target,
+    args: argparse.Namespace,
+    fetched_days: list[str],
+) -> None:
+    if not fetched_days:
+        return
+    try:
+        visible_rows = base_sync.read_snapshot(client, target).rows
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    visible_keys = {day_skip_key(record) for record in visible_rows}
+    missing = [
+        day
+        for day in fetched_days
+        if (args.store, day) not in visible_keys
+    ]
+    if missing:
+        raise SyncError(f"Base write verification failed; fetched store/day rows not visible: {missing}")
+    print(f"Verified fetched days are visible in Base table: {', '.join(fetched_days)}")
+
+
 def verify_written_days(
     client: MaybeAIClient,
     target: dict[str, Any],
@@ -1849,6 +1938,8 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     existing_records: list[dict[str, Any]] = []
     client: MaybeAIClient | None = None
     target: dict[str, Any] | None = None
+    resolved_target: base_sync.Target | None = None
+    base_snapshot: base_sync.Snapshot | None = None
     worksheet_name: str | None = None
     raw_snapshot_days: set[str] = set()
     existing_raw_rows: list[dict[str, Any]] = []
@@ -1865,13 +1956,31 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if needs_client:
         client = build_maybeai_client(args)
         if needs_sheet_target:
-            target, worksheet_name = build_sheet_target(args, client)
-            print(
-                "MaybeAI daily traffic sheet read/write target: "
-                f"uri={target['uri']}"
-                f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
-            )
-            existing_records = [] if args.clear_worksheet_data else read_existing_for_sync(args, client, target)
+            resolved_target = resolve_write_target(args, client)
+            if resolved_target.engine == "base":
+                try:
+                    base_sync.require_base_compatible_options(
+                        resolved_target,
+                        read_range=args.read_range,
+                        ensure_headers=args.ensure_headers,
+                    )
+                    base_snapshot = base_sync.read_snapshot(client, resolved_target)
+                except base_sync.BaseSyncError as error:
+                    raise SyncError(str(error)) from error
+                print(
+                    "MaybeAI daily traffic Base target: "
+                    f"document_id={resolved_target.document_id}, gid={resolved_target.gid}, "
+                    f"table_id={resolved_target.table_id}, worksheet={resolved_target.worksheet_name}"
+                )
+                existing_records = [] if args.clear_worksheet_data else list(base_snapshot.rows)
+            else:
+                target, worksheet_name = build_sheet_target(args, client)
+                print(
+                    "MaybeAI daily traffic sheet read/write target: "
+                    f"uri={target['uri']}"
+                    f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+                )
+                existing_records = [] if args.clear_worksheet_data else read_existing_for_sync(args, client, target)
 
     if args.skip_existing_days or args.etl_source == "raw-api":
         if client is None:
@@ -1973,9 +2082,8 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         print("No fresh SHEIN daily traffic rows; skipping MaybeAI sheet merge/write.")
         print(f"[{args.store}] Store completed: no fresh ETL rows, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}.")
         return
-    assert client is not None and target is not None
+    assert client is not None
     print(f"[{args.store}] Step 6/6: writing ETL sheet.")
-    ensure_headers(args, client, target)
     existing_records_for_merge = existing_records
     if not args.clear_worksheet_data and args.etl_source == "raw-api" and args.sheet_display_days:
         replacement_days = display_day_set_from_requested_days(requested_days, args.sheet_display_days)
@@ -1993,9 +2101,24 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     display_records = filter_records_for_sheet_display(merged_records, requested_days, args.sheet_display_days)
     if args.sheet_display_days:
         print(f"Sheet display window: last {args.sheet_display_days} day(s), rows={len(display_records)}")
-    write_sheet_records(client, target, display_records, args)
     display_fresh_records = filter_records_for_sheet_display(records, requested_days, args.sheet_display_days)
-    verify_written_days(client, target, args, display_records, days_with_etl_records(display_fresh_records, args.store, missing_days))
+    fetched_display_days = days_with_etl_records(display_fresh_records, args.store, missing_days)
+    if resolved_target is not None and resolved_target.engine == "base":
+        assert base_snapshot is not None
+        write_result = write_resolved_target(
+            client,
+            resolved_target,
+            base_snapshot,
+            display_records,
+            args,
+        )
+        print("Write result:", json.dumps(write_result, ensure_ascii=False))
+        verify_base_written_days(client, resolved_target, args, fetched_display_days)
+    else:
+        assert target is not None
+        ensure_headers(args, client, target)
+        write_sheet_records(client, target, display_records, args)
+        verify_written_days(client, target, args, display_records, fetched_display_days)
     print(
         f"[{args.store}] Store completed: fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, "
         f"adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(display_records)}."

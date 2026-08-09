@@ -26,6 +26,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import maybeai_base_sync as base_sync
+
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=12"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
@@ -653,13 +655,37 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
         return
 
     client = build_maybeai_client(args)
-    target, worksheet_name = build_sheet_target(args, client)
-    print(
-        "Incremental cutoff read sheet: "
-        f"uri={target['uri']}"
-        f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
-    )
-    existing_records = read_sheet_records(client, target, args.read_range)
+    try:
+        resolved_target = base_sync.resolve_target(
+            client,
+            args.sheet_url,
+            args.worksheet_name,
+        )
+        base_sync.require_base_compatible_options(
+            resolved_target,
+            read_range=args.read_range,
+            ensure_headers=args.ensure_headers,
+        )
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    if resolved_target.engine == "base":
+        try:
+            existing_records = list(base_sync.read_snapshot(client, resolved_target).rows)
+        except base_sync.BaseSyncError as error:
+            raise SyncError(str(error)) from error
+        print(
+            "Incremental cutoff read Base table: "
+            f"document_id={resolved_target.document_id}, gid={resolved_target.gid}, "
+            f"table_id={resolved_target.table_id}, worksheet={resolved_target.worksheet_name}"
+        )
+    else:
+        target, worksheet_name = build_sheet_target(args, client)
+        print(
+            "Incremental cutoff read sheet: "
+            f"uri={target['uri']}"
+            f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+        )
+        existing_records = read_sheet_records(client, target, args.read_range)
     latest = max_request_time(existing_records, args.store)
     if not latest:
         print(f"No existing {REQUEST_TIME_FIELD} found for store {args.store}; running SHEIN CLI without --sinceRequestTime.")
@@ -688,8 +714,121 @@ def recalculate_formulas(client: MaybeAIClient, target: dict[str, Any]) -> dict[
     return {"uri": payload["uri"], "worksheet_name": payload.get("worksheet_name"), "triggered": True, "success": result.get("success", True), "message": result.get("message"), "error": result.get("error")}
 
 
+def _formula_execution_evidence(result: dict[str, Any]) -> dict[str, Any] | None:
+    for container in (result, result.get("data"), result.get("result")):
+        if not isinstance(container, dict):
+            continue
+        source_info = container.get("source_info")
+        if not isinstance(source_info, dict):
+            continue
+        evidence = source_info.get("base_table_formula_execution")
+        if isinstance(evidence, dict):
+            return evidence
+    return None
+
+
+def recalculate_base_formulas(
+    client: MaybeAIClient,
+    target: base_sync.Target,
+) -> dict[str, Any]:
+    payload = {
+        "uri": target.uri,
+        "document_id": target.document_id,
+        "gid": target.gid,
+        "table_id": target.table_id,
+        "worksheet_name": target.worksheet_name,
+    }
+    try:
+        result = client.post("/api/v1/excel/recalculate_formulas", payload)
+    except SyncError as error:
+        raise SyncError(f"Base formula recalculation failed: {error}") from error
+    if result.get("success") is False:
+        message = result.get("message") or result.get("error") or "success=false"
+        raise SyncError(f"Base formula recalculation did not succeed: {message}")
+    evidence = _formula_execution_evidence(result)
+    if evidence is None:
+        raise SyncError("Base formula recalculation returned no base_table_formula_execution evidence")
+    if evidence.get("success") is False or evidence.get("error"):
+        raise SyncError(f"Base formula recalculation reported an error: {evidence}")
+    return {"triggered": True, "success": True, "evidence": evidence}
+
+
+def _write_base_sheet(
+    args: argparse.Namespace,
+    rows: list[dict[str, Any]],
+    client: MaybeAIClient,
+    target: base_sync.Target,
+) -> None:
+    try:
+        base_sync.require_base_compatible_options(
+            target,
+            read_range=args.read_range,
+            ensure_headers=args.ensure_headers,
+        )
+        snapshot = base_sync.read_snapshot(client, target)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+
+    existing_records = list(snapshot.rows)
+    other_store_records = [
+        record
+        for record in existing_records
+        if not is_blank_record(record) and str(record.get("store", "")).strip() != args.store
+    ]
+    existing_store_records = [
+        record
+        for record in existing_records
+        if not is_blank_record(record) and str(record.get("store", "")).strip() == args.store
+    ]
+    current_store_records = rows_to_records(rows, args.store)
+    merged_store_records = merge_records_by_unique_key(existing_store_records, current_store_records)
+    merged_records = sort_records_by_request_time_desc([*other_store_records, *merged_store_records])
+    try:
+        writable_records = snapshot.records_from_rows(merged_records)
+        write_result = base_sync.replace_snapshot(client, snapshot, writable_records)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+
+    recalculate_result = None
+    if args.recalculate_formulas:
+        recalculate_result = recalculate_base_formulas(client, target)
+    print(
+        "Done:",
+        json.dumps(
+            {
+                "spreadsheet_url": target.uri,
+                "worksheet": target.worksheet_name,
+                "engine": "base",
+                "table_id": target.table_id,
+                "expected_revision": snapshot.revision,
+                "revision": write_result.get("revision"),
+                "rows": len(merged_records),
+                "fresh_store_rows": len(current_store_records),
+                "merged_store_rows": len(merged_store_records),
+                "preserved_other_store_rows": len(other_store_records),
+                "unique_key": UNIQUE_KEY_FIELDS,
+                "write_api": "table_record_replace",
+                "recalculate_formulas": bool(args.recalculate_formulas),
+                "formula_execution": None if recalculate_result is None else recalculate_result["evidence"],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     client = build_maybeai_client(args)
+    try:
+        resolved_target = base_sync.resolve_target(
+            client,
+            args.sheet_url,
+            args.worksheet_name,
+        )
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    if resolved_target.engine == "base":
+        _write_base_sheet(args, rows, client, resolved_target)
+        return
     target, worksheet_name = build_sheet_target(args, client)
     print(
         "MaybeAI sheet read/write target: "

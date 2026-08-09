@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import maybeai_base_sync as base_sync
+
 
 MODULE_PATH = Path(__file__).with_name("sync-shein-daily-traffic-to-sheet.py")
 SPEC = importlib.util.spec_from_file_location("sync_shein_daily_traffic_to_sheet", MODULE_PATH)
@@ -23,6 +25,114 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             sync.SHEET_HEADERS,
             *[[row.get(header, "") for header in sync.SHEET_HEADERS] for row in rows],
         ]
+
+    def resolved_sheet_target(self) -> base_sync.Target:
+        return base_sync.Target(
+            uri="etl-sheet",
+            document_id="doc-sheet",
+            gid=0,
+            worksheet_name="每日流量ETL",
+            engine="sheet",
+            table_id=None,
+        )
+
+    def test_base_target_replaces_display_snapshot_without_legacy_sheet_calls(self) -> None:
+        target = base_sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41",
+            document_id="69b91dd6bf42f58633fdc53b",
+            gid=41,
+            worksheet_name="每日流量ETL",
+            engine="base",
+            table_id="tbl_daily_traffic",
+        )
+        args = type("Args", (), {"read_range": None, "ensure_headers": False})()
+
+        class Snapshot:
+            revision = 41
+            rows: list[dict] = []
+
+            def records_from_rows(self, rows: list[dict]) -> list[dict]:
+                return [{"fld_store": row["店铺"], "fld_day": row["日期"]} for row in rows]
+
+        class RejectLegacyClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def post(self, path: str, payload: dict, timeout: int = 30) -> dict:
+                del timeout
+                self.calls.append((path, payload))
+                raise AssertionError(f"Base daily traffic route attempted legacy endpoint: {path}")
+
+        client = RejectLegacyClient()
+        display_records = [{"店铺": "店3", "日期": "2026-08-06"}]
+        snapshot = Snapshot()
+        with mock.patch.object(sync.base_sync, "replace_snapshot", return_value={"success": True, "revision": 42}) as replace_snapshot:
+            result = sync.write_resolved_target(client, target, snapshot, display_records, args)
+
+        self.assertEqual(client.calls, [])
+        self.assertEqual(result["write_api"], "table_record_replace")
+        self.assertEqual(result["expected_revision"], 41)
+        replace_snapshot.assert_called_once_with(
+            client,
+            snapshot,
+            [{"fld_store": "店3", "fld_day": "2026-08-06"}],
+        )
+
+    def test_raw_db_base_target_uses_preexisting_fields_without_header_write(self) -> None:
+        target = base_sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-raw?gid=0",
+            document_id="doc-raw",
+            gid=0,
+            worksheet_name="店3每日流量",
+            engine="base",
+            table_id="tbl_raw_daily_traffic",
+        )
+        args = type(
+            "Args",
+            (),
+            {
+                "raw_db_uri": target.uri,
+                "raw_db_worksheet_name": "店3每日流量",
+                "raw_db_worksheet_suffix": "每日流量",
+                "store": "店3",
+            },
+        )()
+
+        class Snapshot:
+            revision = 11
+            rows: list[dict] = []
+
+            def records_from_rows(self, rows: list[dict]) -> list[dict]:
+                return [{"fld_day": row["date"], "fld_skc": row["skc"]} for row in rows]
+
+        class RejectLegacyClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def post(self, path: str, payload: dict, timeout: int = 30) -> dict:
+                del timeout
+                self.calls.append((path, payload))
+                raise AssertionError(f"Base raw staging attempted legacy endpoint: {path}")
+
+        client = RejectLegacyClient()
+        snapshot = Snapshot()
+        with mock.patch.object(sync.base_sync, "resolve_target", return_value=target), \
+             mock.patch.object(sync.base_sync, "read_snapshot", return_value=snapshot), \
+             mock.patch.object(sync.base_sync, "replace_snapshot", return_value={"success": True, "revision": 12}) as replace_snapshot:
+            uri, worksheet_name = sync.write_raw_worksheet_for_day(
+                args,
+                client,
+                "2026-08-06",
+                [{"date": "2026-08-06", "skc": "skc-1"}],
+            )
+
+        self.assertEqual((uri, worksheet_name), (target.uri, target.worksheet_name))
+        self.assertEqual(client.calls, [])
+        replace_snapshot.assert_called_once_with(
+            client,
+            snapshot,
+            [{"fld_day": "2026-08-06", "fld_skc": "skc-1"}],
+        )
 
     def test_sheet_headers_include_traffic_quality_and_return_metrics_without_json_columns(self) -> None:
         expected_headers_without_json = [
@@ -219,6 +329,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync, "resolve_write_target", return_value=self.resolved_sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "每日流量ETL")), \
             mock.patch.object(sync, "read_existing_for_sync", return_value=[]), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", return_value=raw_response), \
@@ -261,6 +372,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync, "resolve_write_target", return_value=self.resolved_sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "每日流量ETL")), \
             mock.patch.object(sync, "read_existing_for_sync", return_value=[]), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]) as read_raw, \

@@ -631,6 +631,40 @@ def build_recalculate_target(args: argparse.Namespace) -> dict[str, Any]:
     return target
 
 
+def run_recalculate(args: argparse.Namespace, client: MaybeAIClient) -> dict[str, Any]:
+    sheet_url = args.recalculate_sheet_url or args.sheet_url
+    try:
+        recalculate_target = base_sync.resolve_target(
+            client,
+            sheet_url,
+            args.recalculate_worksheet_name,
+        )
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    if recalculate_target.engine == "base":
+        return recalculate_base_formulas(client, recalculate_target)
+    target = {"uri": recalculate_target.uri}
+    if recalculate_target.worksheet_name:
+        target["worksheet_name"] = recalculate_target.worksheet_name
+    return recalculate_formulas(client, target)
+
+
+def run_recalculate_target_for_log(args: argparse.Namespace, client: MaybeAIClient) -> dict[str, Any] | None:
+    sheet_url = args.recalculate_sheet_url or args.sheet_url
+    try:
+        recalculate_target = base_sync.resolve_target(
+            client,
+            sheet_url,
+            args.recalculate_worksheet_name,
+        )
+    except base_sync.BaseSyncError as error:
+        return None
+    info: dict[str, Any] = {"uri": recalculate_target.uri, "gid": recalculate_target.gid}
+    if recalculate_target.worksheet_name:
+        info["worksheet_name"] = recalculate_target.worksheet_name
+    return info
+
+
 def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range: str | None = None) -> list[dict[str, Any]]:
     read_payload = {**target}
     if read_range:
@@ -790,8 +824,10 @@ def _write_base_sheet(
         raise SyncError(str(error)) from error
 
     recalculate_result = None
+    recalculate_target = None
     if args.recalculate_formulas:
-        recalculate_result = recalculate_base_formulas(client, target)
+        recalculate_result = run_recalculate(args, client)
+        recalculate_target = run_recalculate_target_for_log(args, client)
     print(
         "Done:",
         json.dumps(
@@ -809,6 +845,9 @@ def _write_base_sheet(
                 "unique_key": UNIQUE_KEY_FIELDS,
                 "write_api": "table_record_replace",
                 "recalculate_formulas": bool(args.recalculate_formulas),
+                "recalculate_uri": None if recalculate_target is None else recalculate_target["uri"],
+                "recalculate_worksheet_name": None if recalculate_target is None else recalculate_target.get("worksheet_name"),
+                "recalculate_gid": None if recalculate_target is None else recalculate_target.get("gid"),
                 "formula_execution": None if recalculate_result is None else recalculate_result["evidence"],
             },
             ensure_ascii=False,

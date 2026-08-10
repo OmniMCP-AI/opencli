@@ -683,7 +683,7 @@ def infer_since_request_time(args: argparse.Namespace) -> None:
         print(
             "Incremental cutoff read sheet: "
             f"uri={target['uri']}"
-            f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+            f"{', worksheet=' + worksheet_name if worksheet_name else ''}"
         )
         existing_records = read_sheet_records(client, target, args.read_range)
     latest = max_request_time(existing_records, args.store)
@@ -700,7 +700,7 @@ def recalculate_formulas(client: MaybeAIClient, target: dict[str, Any]) -> dict[
     print(
         "Recalculating MaybeAI formulas with recalculate_formulas: "
         f"uri={payload['uri']}"
-        f"{f', worksheet={payload.get('worksheet_name')}' if payload.get('worksheet_name') else ''}"
+        f"{', worksheet=' + payload.get('worksheet_name', '') if payload.get('worksheet_name') else ''}"
     )
     try:
         result = client.post("/api/v1/excel/recalculate_formulas", payload)
@@ -833,7 +833,7 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
     print(
         "MaybeAI sheet read/write target: "
         f"uri={target['uri']}"
-        f"{f', worksheet={worksheet_name}' if worksheet_name else ''}"
+        f"{', worksheet=' + worksheet_name if worksheet_name else ''}"
     )
 
     existing_records = read_sheet_records(client, target, args.read_range)

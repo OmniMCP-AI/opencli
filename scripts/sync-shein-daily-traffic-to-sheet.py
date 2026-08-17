@@ -1638,7 +1638,11 @@ def recalculate_traffic_worksheets(args: argparse.Namespace, client: MaybeAIClie
     for index, payload in enumerate(TRAFFIC_RECALCULATE_WORKSHEETS, start=1):
         worksheet_name = payload["worksheet_name"]
         print(f"[{args.store}] Step 7/7: recalculating worksheet {index}/{total}: {worksheet_name}.")
-        result = recalculate_client.post("/api/v1/excel/recalculate_formulas", dict(payload))
+        result = recalculate_client.post(
+            "/api/v1/excel/recalculate_formulas",
+            dict(payload),
+            timeout=DEFAULT_MAYBEAI_API_TIMEOUT,
+        )
         success = result.get("success", True)
         if success is False:
             message = result.get("message") or result.get("error") or "success=false"

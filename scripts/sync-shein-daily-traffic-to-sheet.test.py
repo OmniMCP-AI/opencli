@@ -24,10 +24,12 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         class FormulaClient:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict]] = []
+                self.timeouts: list[int] = []
                 self.token = "test-token"
 
-            def post(self, path: str, payload: dict) -> dict:
+            def post(self, path: str, payload: dict, timeout: int = 30) -> dict:
                 self.calls.append((path, payload))
+                self.timeouts.append(timeout)
                 return {"success": True}
 
         formula_client = FormulaClient()
@@ -53,6 +55,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "SKC区域运费当月",
         ])
         self.assertTrue(all(path == "/api/v1/excel/recalculate_formulas" for path, _ in formula_client.calls))
+        self.assertEqual(formula_client.timeouts, [sync.DEFAULT_MAYBEAI_API_TIMEOUT] * 6)
         self.assertEqual(client_ctor.call_args.args[:2], (sync.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
         self.assertEqual(formula_client.calls[0][1], {
             "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",

@@ -48,6 +48,55 @@ DEFAULT_RAW_READ_DAYS = 30
 SHEET_READ_CHUNK_ROWS = 10000
 WORKSHEET_DIMENSIONS_PATH = "/api/v1/excel_v2/worksheet/dimensions"
 
+TRAFFIC_RECALCULATE_WORKSHEETS = [
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
+        "clear_cache": False,
+        "formula_engine": "base",
+        "workbook_scope": False,
+        "sync_save": False,
+        "worksheet_name": "产品_SKU日事实表",
+    },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=93",
+        "clear_cache": False,
+        "formula_engine": "base",
+        "workbook_scope": False,
+        "sync_save": False,
+        "worksheet_name": "产品_日趋势汇总表",
+    },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=94",
+        "clear_cache": False,
+        "formula_engine": "base",
+        "workbook_scope": False,
+        "sync_save": False,
+        "worksheet_name": "产品_类目周期明细表",
+    },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=95",
+        "clear_cache": False,
+        "formula_engine": "base",
+        "workbook_scope": False,
+        "sync_save": False,
+        "worksheet_name": "产品_生命周期周期汇总表",
+    },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=92",
+        "clear_cache": False,
+        "formula_engine": "base",
+        "workbook_scope": False,
+        "sync_save": False,
+        "worksheet_name": "产品_预设周期汇总表",
+    },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=123",
+        "clear_cache": False,
+        "sync_save": True,
+        "worksheet_name": "SKC区域运费当月",
+    },
+]
+
 RAW_SHEET_HEADERS = [
     "date",
     "queried_start_date",
@@ -1570,6 +1619,36 @@ def build_maybeai_client(args: argparse.Namespace) -> MaybeAIClient:
     )
 
 
+def recalculate_traffic_worksheets(args: argparse.Namespace, client: MaybeAIClient) -> list[dict[str, Any]]:
+    """Recalculate the downstream traffic worksheets in their required order."""
+    token = getattr(client, "token", None)
+    if not token:
+        # Some network-free callers provide a lightweight client double. A real
+        # MaybeAIClient always has a token, so only those callers can skip this IO.
+        print(f"[{args.store}] Worksheet recalculation skipped: MaybeAI client has no token.")
+        return []
+    recalculate_client = MaybeAIClient(
+        DEFAULT_MAYBEAI_BASE_URL,
+        token,
+        attempts=args.maybeai_api_attempts,
+        retry_delay_seconds=args.maybeai_api_retry_delay_seconds,
+    )
+    results: list[dict[str, Any]] = []
+    total = len(TRAFFIC_RECALCULATE_WORKSHEETS)
+    for index, payload in enumerate(TRAFFIC_RECALCULATE_WORKSHEETS, start=1):
+        worksheet_name = payload["worksheet_name"]
+        print(f"[{args.store}] Step 7/7: recalculating worksheet {index}/{total}: {worksheet_name}.")
+        result = recalculate_client.post("/api/v1/excel/recalculate_formulas", dict(payload))
+        success = result.get("success", True)
+        if success is False:
+            message = result.get("message") or result.get("error") or "success=false"
+            raise SyncError(f"Worksheet recalculation failed for {worksheet_name}: {message}")
+        results.append({"worksheet_name": worksheet_name, "success": success, "result": result})
+        print(f"[{args.store}] Worksheet recalculation {index}/{total} completed: {worksheet_name}.")
+    print(f"[{args.store}] Step 7/7 completed: recalculated {total} worksheets in order.")
+    return results
+
+
 def resolve_worksheet_name(client: MaybeAIClient, doc_id: str, gid: str | None) -> str | None:
     if gid is None:
         return None
@@ -1933,7 +2012,7 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
     print(f"SHEIN daily traffic date range: {requested_days[0]} to {requested_days[-1]}")
     print(f"SHEIN daily traffic target sheet URL: {args.sheet_url}")
-    print(f"[{args.store}] Step 1/6: preparing MaybeAI target and reading existing ETL rows.")
+    print(f"[{args.store}] Step 1/7: preparing MaybeAI target and reading existing ETL rows.")
 
     existing_records: list[dict[str, Any]] = []
     client: MaybeAIClient | None = None
@@ -2005,19 +2084,19 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if skipped_days:
         print(f"Skipped existing raw DB days: {', '.join(skipped_days)}")
     print(
-        f"[{args.store}] Step 2/6: date plan ready; "
+        f"[{args.store}] Step 2/7: date plan ready; "
         f"requested={len(requested_days)}, to_fetch={len(missing_days)}, skipped={len(skipped_days)}."
     )
 
-    print(f"[{args.store}] Step 3/6: fetching SHEIN daily traffic rows and saving raw DB per day.")
+    print(f"[{args.store}] Step 3/7: fetching SHEIN daily traffic rows and saving raw DB per day.")
     fetch_args = args
     if args.etl_source == "raw-api" and missing_days:
         fetch_args = argparse.Namespace(**vars(args))
         fetch_args.raw_db = True
         print(f"[{args.store}] Raw API source is missing {len(missing_days)} day(s); crawling and saving missing raw DB snapshots.")
     fetched_rows = fetch_and_save_shein_rows(fetch_args, repo_root, client, missing_days)
-    print(f"[{args.store}] Step 3/6 completed: fetched adapter_rows={len(fetched_rows)}.")
-    print(f"[{args.store}] Step 4/6 completed: raw daily rows are saved immediately after each day fetch when enabled.")
+    print(f"[{args.store}] Step 3/7 completed: fetched adapter_rows={len(fetched_rows)}.")
+    print(f"[{args.store}] Step 4/7 completed: raw daily rows are saved immediately after each day fetch when enabled.")
     etl_fresh_rows = fetched_rows
     if args.etl_source == "raw-api" and not skip_sheet_write:
         assert client is not None
@@ -2058,14 +2137,14 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
             f"[{args.store}] ETL source rows combined: raw_db_rows={len(existing_raw_rows)}, "
             f"fresh_rows={len(fetched_rows)}, total={len(adapter_rows)}."
         )
-    print(f"[{args.store}] Step 5/6: running ETL mapping.")
+    print(f"[{args.store}] Step 5/7: running ETL mapping.")
     records = rows_to_records(adapter_rows, args.store)
     summary = traffic_rows_summary(adapter_rows, records, requested_days, missing_days, skipped_days)
     print("SHEIN daily traffic summary:", json.dumps(summary, ensure_ascii=False))
     if records:
         sample = {header: records[0].get(header, "") for header in SHEET_HEADERS if header not in JSON_BLOB_FIELDS}
         print("Sample ETL row:", json.dumps(sample, ensure_ascii=False))
-    print(f"[{args.store}] Step 5/6 completed: etl_rows={len(records)}.")
+    print(f"[{args.store}] Step 5/7 completed: etl_rows={len(records)}.")
 
     if args.dry_run:
         print("Dry run enabled; skipping MaybeAI sheet write.")
@@ -2083,7 +2162,7 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         print(f"[{args.store}] Store completed: no fresh ETL rows, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}.")
         return
     assert client is not None
-    print(f"[{args.store}] Step 6/6: writing ETL sheet.")
+    print(f"[{args.store}] Step 6/7: writing ETL sheet.")
     existing_records_for_merge = existing_records
     if not args.clear_worksheet_data and args.etl_source == "raw-api" and args.sheet_display_days:
         replacement_days = display_day_set_from_requested_days(requested_days, args.sheet_display_days)
@@ -2119,6 +2198,7 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         ensure_headers(args, client, target)
         write_sheet_records(client, target, display_records, args)
         verify_written_days(client, target, args, display_records, fetched_display_days)
+    recalculate_traffic_worksheets(args, client)
     print(
         f"[{args.store}] Store completed: fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, "
         f"adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(display_records)}."

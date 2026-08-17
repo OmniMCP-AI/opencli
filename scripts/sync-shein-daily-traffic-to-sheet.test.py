@@ -20,6 +20,55 @@ SPEC.loader.exec_module(sync)
 
 
 class SheinDailyTrafficSyncTests(unittest.TestCase):
+    def test_recalculate_traffic_worksheets_posts_in_order_with_expected_payloads(self) -> None:
+        class FormulaClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+                self.token = "test-token"
+
+            def post(self, path: str, payload: dict) -> dict:
+                self.calls.append((path, payload))
+                return {"success": True}
+
+        formula_client = FormulaClient()
+        args = type(
+            "Args",
+            (),
+            {
+                "store": "店3",
+                "maybeai_api_attempts": 1,
+                "maybeai_api_retry_delay_seconds": 0,
+            },
+        )()
+        with mock.patch.object(sync, "MaybeAIClient", return_value=formula_client) as client_ctor:
+            result = sync.recalculate_traffic_worksheets(args, type("Client", (), {"token": "test-token"})())
+
+        self.assertEqual(len(result), 6)
+        self.assertEqual([payload["worksheet_name"] for _, payload in formula_client.calls], [
+            "产品_SKU日事实表",
+            "产品_日趋势汇总表",
+            "产品_类目周期明细表",
+            "产品_生命周期周期汇总表",
+            "产品_预设周期汇总表",
+            "SKC区域运费当月",
+        ])
+        self.assertTrue(all(path == "/api/v1/excel/recalculate_formulas" for path, _ in formula_client.calls))
+        self.assertEqual(client_ctor.call_args.args[:2], (sync.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
+        self.assertEqual(formula_client.calls[0][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
+            "clear_cache": False,
+            "formula_engine": "base",
+            "workbook_scope": False,
+            "sync_save": False,
+            "worksheet_name": "产品_SKU日事实表",
+        })
+        self.assertEqual(formula_client.calls[-1][1], {
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=123",
+            "clear_cache": False,
+            "sync_save": True,
+            "worksheet_name": "SKC区域运费当月",
+        })
+
     def sheet_values(self, rows: list[dict]) -> list[list]:
         return [
             sync.SHEET_HEADERS,

@@ -28,7 +28,7 @@ import maybeai_base_sync as base_sync
 
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41"
-DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
+DEFAULT_MAYBEAI_BASE_URL = "https://a-play-be.maybeai.cn"
 DEFAULT_MAYBEAI_API_TIMEOUT = 300
 DEFAULT_MAYBEAI_API_ATTEMPTS = 3
 DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5

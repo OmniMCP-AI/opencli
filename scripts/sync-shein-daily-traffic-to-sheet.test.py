@@ -53,7 +53,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "SKC区域运费当月",
         ])
         self.assertTrue(all(path == "/api/v1/excel/recalculate_formulas" for path, _ in formula_client.calls))
-        self.assertEqual(client_ctor.call_args.args[:2], (sync.DEFAULT_MAYBEAI_RECALCULATE_BASE_URL, "test-token"))
+        self.assertEqual(client_ctor.call_args.args[:2], (sync.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
         self.assertEqual(formula_client.calls[0][1], {
             "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
             "clear_cache": False,

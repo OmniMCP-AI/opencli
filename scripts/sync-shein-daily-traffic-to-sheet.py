@@ -29,7 +29,6 @@ import maybeai_base_sync as base_sync
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
-DEFAULT_MAYBEAI_RECALCULATE_BASE_URL = "https://a-play-be.maybeai.cn"
 DEFAULT_MAYBEAI_API_TIMEOUT = 300
 DEFAULT_MAYBEAI_API_ATTEMPTS = 3
 DEFAULT_MAYBEAI_API_RETRY_DELAY_SECONDS = 5
@@ -1629,7 +1628,7 @@ def recalculate_traffic_worksheets(args: argparse.Namespace, client: MaybeAIClie
         print(f"[{args.store}] Worksheet recalculation skipped: MaybeAI client has no token.")
         return []
     recalculate_client = MaybeAIClient(
-        DEFAULT_MAYBEAI_RECALCULATE_BASE_URL,
+        DEFAULT_MAYBEAI_BASE_URL,
         token,
         attempts=args.maybeai_api_attempts,
         retry_delay_seconds=args.maybeai_api_retry_delay_seconds,

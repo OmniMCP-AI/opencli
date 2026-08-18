@@ -812,6 +812,23 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(scoped.sheet_display_days, 14)
         self.assertEqual(args.store, "店3")
 
+    def test_configured_stores_recalculate_once_after_all_writes(self) -> None:
+        base_args = object()
+        scoped_args = [
+            type("Args", (), {"store": f"店{index}", "profile": f"profile{index}"})()
+            for index in range(1, 4)
+        ]
+        clients = [object(), object(), object()]
+
+        with mock.patch.object(sync, "args_for_store_config", side_effect=scoped_args), \
+             mock.patch.object(sync, "run_sync", side_effect=clients) as run_sync, \
+             mock.patch.object(sync, "recalculate_traffic_worksheets") as recalculate:
+            sync.run_configured_stores(base_args, [{}, {}, {}], Path("."))
+
+        self.assertEqual(run_sync.call_count, 3)
+        self.assertTrue(all(call.kwargs == {"recalculate": False} for call in run_sync.call_args_list))
+        recalculate.assert_called_once_with(scoped_args[-1], clients[-1])
+
     def test_command_line_sheet_display_days_overrides_store_config_default(self) -> None:
         args = type("Args", (), {
             "store": "店3",

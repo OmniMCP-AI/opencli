@@ -2010,7 +2010,12 @@ def read_existing_for_sync(args: argparse.Namespace, client: MaybeAIClient, targ
     return records
 
 
-def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
+def run_sync(
+    args: argparse.Namespace,
+    repo_root: Path,
+    *,
+    recalculate: bool = True,
+) -> MaybeAIClient | None:
     requested_days = resolve_requested_days(args)
     skip_sheet_write = bool(getattr(args, "skip_sheet_write", False))
     print(f"SHEIN daily traffic sync store/profile: store={args.store}, profile={args.profile or '<default>'}")
@@ -2153,18 +2158,18 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if args.dry_run:
         print("Dry run enabled; skipping MaybeAI sheet write.")
         print(f"[{args.store}] Store completed: dry_run=true, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, etl_rows={len(records)}.")
-        return
+        return None
     if skip_sheet_write:
         print("Skip sheet write enabled; skipping ETL sheet merge/write.")
         print(
             f"[{args.store}] Store completed: skip_sheet_write=true, fetched_days={len(missing_days)}, "
             f"skipped_days={len(skipped_days)}, adapter_rows={len(adapter_rows)}, etl_rows={len(records)}."
         )
-        return
+        return None
     if not records:
         print("No fresh SHEIN daily traffic rows; skipping MaybeAI sheet merge/write.")
         print(f"[{args.store}] Store completed: no fresh ETL rows, fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}.")
-        return
+        return None
     assert client is not None
     print(f"[{args.store}] Step 6/7: writing ETL sheet.")
     existing_records_for_merge = existing_records
@@ -2202,11 +2207,13 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
         ensure_headers(args, client, target)
         write_sheet_records(client, target, display_records, args)
         verify_written_days(client, target, args, display_records, fetched_display_days)
-    recalculate_traffic_worksheets(args, client)
+    if recalculate:
+        recalculate_traffic_worksheets(args, client)
     print(
         f"[{args.store}] Store completed: fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, "
         f"adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(display_records)}."
     )
+    return client
 
 
 def run_self_test() -> int:
@@ -2279,6 +2286,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_configured_stores(
+    args: argparse.Namespace,
+    configs: list[dict[str, Any]],
+    repo_root: Path,
+) -> None:
+    """Write all configured stores first, then recalculate downstream sheets once."""
+    print(f"Running SHEIN daily traffic for {len(configs)} configured stores.")
+    write_client: MaybeAIClient | None = None
+    write_args: argparse.Namespace | None = None
+    for index, config in enumerate(configs, start=1):
+        scoped_args = args_for_store_config(args, config)
+        print(f"=== configured store {index}/{len(configs)}: store={scoped_args.store}, profile={scoped_args.profile} ===")
+        store_client = run_sync(scoped_args, repo_root, recalculate=False)
+        if store_client is not None:
+            write_client = store_client
+            write_args = scoped_args
+        print(f"=== configured store completed {progress_label(index, len(configs))}: store={scoped_args.store} ===")
+    if write_client is not None and write_args is not None:
+        print("All configured stores written; recalculating traffic worksheets once.")
+        recalculate_traffic_worksheets(write_args, write_client)
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -2295,12 +2324,7 @@ def main() -> int:
             configs = filter_store_configs(load_store_configs(Path(args.store_config).expanduser()), args.store_key)
             if not configs:
                 raise SyncError("No store configs matched --store-key.")
-            print(f"Running SHEIN daily traffic for {len(configs)} configured stores.")
-            for index, config in enumerate(configs, start=1):
-                scoped_args = args_for_store_config(args, config)
-                print(f"=== configured store {index}/{len(configs)}: store={scoped_args.store}, profile={scoped_args.profile} ===")
-                run_sync(scoped_args, repo_root)
-                print(f"=== configured store completed {progress_label(index, len(configs))}: store={scoped_args.store} ===")
+            run_configured_stores(args, configs, repo_root)
         else:
             run_sync(args, repo_root)
         return 0

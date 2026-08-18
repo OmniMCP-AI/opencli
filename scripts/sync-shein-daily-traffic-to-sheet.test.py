@@ -130,6 +130,53 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             [{"fld_store": "店3", "fld_day": "2026-08-06"}],
         )
 
+    def test_base_sync_merges_other_stores_before_replacing_snapshot(self) -> None:
+        target = base_sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-traffic?gid=41",
+            document_id="doc-traffic",
+            gid=41,
+            worksheet_name="每日流量ETL",
+            engine="base",
+            table_id="tbl_daily_traffic",
+        )
+        args = type("Args", (), {
+            "store": "店3",
+            "profile": "profile3",
+            "sheet_url": target.uri,
+            "dry_run": False,
+            "skip_sheet_write": False,
+            "skip_existing_days": False,
+            "raw_db": False,
+            "etl_source": "fresh",
+            "sheet_display_days": None,
+            "clear_worksheet_data": False,
+            "ensure_headers": False,
+            "read_range": None,
+        })()
+
+        class Snapshot:
+            revision = 41
+            rows = [
+                {"店铺": "店1", "日期": "2026-08-06", "商品货号": "store1-skc"},
+                {"店铺": "店2", "日期": "2026-08-06", "商品货号": "store2-skc"},
+            ]
+
+        written_records: list[dict] = []
+        with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-08-06"]), \
+             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+             mock.patch.object(sync, "resolve_write_target", return_value=target), \
+             mock.patch.object(sync.base_sync, "read_snapshot", return_value=Snapshot()), \
+             mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"date": "2026-08-06", "skc": "store3-skc"}]), \
+             mock.patch.object(sync, "write_resolved_target", side_effect=lambda _client, _target, _snapshot, records, _args: written_records.extend(records) or {"success": True}), \
+             mock.patch.object(sync, "verify_base_written_days"), \
+             mock.patch.object(sync, "recalculate_traffic_worksheets"):
+            sync.run_sync(args, Path("."))
+
+        self.assertEqual(
+            {(row["店铺"], row["商品货号"]) for row in written_records},
+            {("店1", "store1-skc"), ("店2", "store2-skc"), ("店3", "store3-skc")},
+        )
+
     def test_raw_db_base_target_uses_preexisting_fields_without_header_write(self) -> None:
         target = base_sync.Target(
             uri="https://www.maybe.ai/docs/spreadsheets/d/doc-raw?gid=0",

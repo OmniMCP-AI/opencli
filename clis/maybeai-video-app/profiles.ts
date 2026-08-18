@@ -5,15 +5,19 @@ export const VIDEO_ASPECT_RATIOS = ['9:16', '16:9', '4:3', '3:4', '1:1'] as cons
 export const VIDEO_DURATIONS = ['5', '10', '15', '20', '30', '45', '60'] as const;
 export const VIDEO_STYLES = ['remake', 'product-demo', 'listing', 'ugc', 'lifestyle', 'tutorial', 'showcase'] as const;
 export const VIDEO_MODELS = [
-  'fal-ai/kling-video/v2.6/pro/image-to-video',
   'fal-ai/kling-video/v3/pro/image-to-video',
+  'fal-ai/kling-video/v2.6/pro/image-to-video',
   'fal-ai/kling-video/o1/reference-to-video',
   'fal-ai/kling-video/o1/standard/reference-to-video',
   'fal-ai/kling-video/o3/pro/reference-to-video',
   'fal-ai/kling-video/o3/standard/image-to-video',
+  'bytedance/seedance-2.0/fast/image-to-video',
+  'bytedance/seedance-2.0/fast/reference-to-video',
+  'bytedance/seedance-2.0/image-to-video',
+  'bytedance/seedance-2.0/reference-to-video',
 ] as const;
 
-export const DEFAULT_VIDEO_MODEL = 'fal-ai/kling-video/v2.6/pro/image-to-video' as const;
+export const DEFAULT_VIDEO_MODEL = 'fal-ai/kling-video/v3/pro/image-to-video' as const;
 
 export const OPTION_VALUES = {
   platform: [...PLATFORMS],

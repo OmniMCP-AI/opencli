@@ -50,6 +50,7 @@ export const APPS: AppDefinition[] = [
       field('ratio', 'string', '视频宽高比'),
       field('prompt', 'text', '翻拍要求'),
       field('engine', 'string', '底层视频模型'),
+      field('generate_audio', 'boolean', '是否生成音频'),
     ],
     output: DEFAULT_VIDEO_OUTPUT,
   },

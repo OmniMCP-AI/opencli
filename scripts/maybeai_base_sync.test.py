@@ -147,7 +147,7 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 1000,
+                    "limit": 100000,
                     "offset": 0,
                 },
                 {
@@ -155,7 +155,7 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 1000,
+                    "limit": 100000,
                     "offset": 1,
                 },
             ],

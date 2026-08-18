@@ -14,7 +14,10 @@ METADATA_PATH = "/api/v1/excel_v2/worksheet/metadata"
 # /excel prefix while metadata is registered only under /excel_v2.
 TABLE_READ_PATH = "/api/v1/excel/table/read"
 TABLE_REPLACE_PATH = "/api/v1/excel/table/record/replace"
-TABLE_READ_PAGE_SIZE = 1000
+# Daily traffic Base tables can contain many historical rows. Read the full
+# working set in one request in the normal case; pagination remains available
+# for tables larger than this limit.
+TABLE_READ_PAGE_SIZE = 100000
 
 
 class PostClient(Protocol):
@@ -168,7 +171,14 @@ def read_snapshot(client: PostClient, target: Target) -> Snapshot:
             }
             rows.append(row)
 
-        has_more = _boolean(table.get("has_more", table.get("hasMore", False)))
+        has_more_marker = table.get("has_more", table.get("hasMore"))
+        # Some Base responses omit the pagination marker. In that case, a
+        # full page is evidence that another page may exist.
+        has_more = (
+            len(records) >= TABLE_READ_PAGE_SIZE
+            if has_more_marker is None
+            else _boolean(has_more_marker)
+        )
         if not has_more:
             break
         if not records:

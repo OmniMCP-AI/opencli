@@ -147,7 +147,7 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 1000,
+                    "limit": 100000,
                     "offset": 0,
                 },
                 {
@@ -155,11 +155,47 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 1000,
+                    "limit": 100000,
                     "offset": 1,
                 },
             ],
         )
+
+    def test_read_snapshot_uses_full_page_as_fallback_when_pagination_marker_missing(self) -> None:
+        target = sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-traffic?gid=41",
+            document_id="doc-traffic",
+            gid=41,
+            worksheet_name="每日流量",
+            engine="base",
+            table_id="tbl_traffic",
+        )
+        original_page_size = sync.TABLE_READ_PAGE_SIZE
+        sync.TABLE_READ_PAGE_SIZE = 2
+        try:
+            first_page = base_table_page(
+                revision=7,
+                has_more=False,
+                records=[
+                    {"record_id": "rec-1", "fields": {"fld_store": "店1"}},
+                    {"record_id": "rec-2", "fields": {"fld_store": "店2"}},
+                ],
+            )
+            del first_page["data"]["has_more"]
+            second_page = base_table_page(
+                revision=7,
+                has_more=False,
+                records=[{"record_id": "rec-3", "fields": {"fld_store": "店3"}}],
+            )
+            del second_page["data"]["has_more"]
+            client = FakeClient({"/api/v1/excel/table/read": [first_page, second_page]})
+
+            snapshot = sync.read_snapshot(client, target)
+        finally:
+            sync.TABLE_READ_PAGE_SIZE = original_page_size
+
+        self.assertEqual([row["店铺"] for row in snapshot.rows], ["店1", "店2", "店3"])
+        self.assertEqual([payload["offset"] for _, payload in client.calls], [0, 2])
 
     def test_snapshot_rejects_sheet_options_unknown_headers_and_formula_input(self) -> None:
         target = sync.Target(

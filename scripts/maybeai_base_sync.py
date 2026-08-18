@@ -171,7 +171,14 @@ def read_snapshot(client: PostClient, target: Target) -> Snapshot:
             }
             rows.append(row)
 
-        has_more = _boolean(table.get("has_more", table.get("hasMore", False)))
+        has_more_marker = table.get("has_more", table.get("hasMore"))
+        # Some Base responses omit the pagination marker. In that case, a
+        # full page is evidence that another page may exist.
+        has_more = (
+            len(records) >= TABLE_READ_PAGE_SIZE
+            if has_more_marker is None
+            else _boolean(has_more_marker)
+        )
         if not has_more:
             break
         if not records:

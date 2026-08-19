@@ -48,55 +48,6 @@ DEFAULT_RAW_READ_DAYS = 30
 SHEET_READ_CHUNK_ROWS = 10000
 WORKSHEET_DIMENSIONS_PATH = "/api/v1/excel_v2/worksheet/dimensions"
 
-TRAFFIC_RECALCULATE_WORKSHEETS = [
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
-        "clear_cache": False,
-        "formula_engine": "base",
-        "workbook_scope": False,
-        "sync_save": False,
-        "worksheet_name": "产品_SKU日事实表",
-    },
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=93",
-        "clear_cache": False,
-        "formula_engine": "base",
-        "workbook_scope": False,
-        "sync_save": False,
-        "worksheet_name": "产品_日趋势汇总表",
-    },
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=94",
-        "clear_cache": False,
-        "formula_engine": "base",
-        "workbook_scope": False,
-        "sync_save": False,
-        "worksheet_name": "产品_类目周期明细表",
-    },
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=95",
-        "clear_cache": False,
-        "formula_engine": "base",
-        "workbook_scope": False,
-        "sync_save": False,
-        "worksheet_name": "产品_生命周期周期汇总表",
-    },
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=92",
-        "clear_cache": False,
-        "formula_engine": "base",
-        "workbook_scope": False,
-        "sync_save": False,
-        "worksheet_name": "产品_预设周期汇总表",
-    },
-    {
-        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=123",
-        "clear_cache": False,
-        "sync_save": True,
-        "worksheet_name": "SKC区域运费当月",
-    },
-]
-
 RAW_SHEET_HEADERS = [
     "date",
     "queried_start_date",
@@ -1619,40 +1570,6 @@ def build_maybeai_client(args: argparse.Namespace) -> MaybeAIClient:
     )
 
 
-def recalculate_traffic_worksheets(args: argparse.Namespace, client: MaybeAIClient) -> list[dict[str, Any]]:
-    """Recalculate the downstream traffic worksheets in their required order."""
-    token = getattr(client, "token", None)
-    if not token:
-        # Some network-free callers provide a lightweight client double. A real
-        # MaybeAIClient always has a token, so only those callers can skip this IO.
-        print(f"[{args.store}] Worksheet recalculation skipped: MaybeAI client has no token.")
-        return []
-    recalculate_client = MaybeAIClient(
-        DEFAULT_MAYBEAI_BASE_URL,
-        token,
-        attempts=args.maybeai_api_attempts,
-        retry_delay_seconds=args.maybeai_api_retry_delay_seconds,
-    )
-    results: list[dict[str, Any]] = []
-    total = len(TRAFFIC_RECALCULATE_WORKSHEETS)
-    for index, payload in enumerate(TRAFFIC_RECALCULATE_WORKSHEETS, start=1):
-        worksheet_name = payload["worksheet_name"]
-        print(f"[{args.store}] Step 7/7: recalculating worksheet {index}/{total}: {worksheet_name}.")
-        result = recalculate_client.post(
-            "/api/v1/excel/recalculate_formulas",
-            dict(payload),
-            timeout=DEFAULT_MAYBEAI_API_TIMEOUT,
-        )
-        success = result.get("success", True)
-        if success is False:
-            message = result.get("message") or result.get("error") or "success=false"
-            raise SyncError(f"Worksheet recalculation failed for {worksheet_name}: {message}")
-        results.append({"worksheet_name": worksheet_name, "success": success, "result": result})
-        print(f"[{args.store}] Worksheet recalculation {index}/{total} completed: {worksheet_name}.")
-    print(f"[{args.store}] Step 7/7 completed: recalculated {total} worksheets in order.")
-    return results
-
-
 def resolve_worksheet_name(client: MaybeAIClient, doc_id: str, gid: str | None) -> str | None:
     if gid is None:
         return None
@@ -2013,8 +1930,6 @@ def read_existing_for_sync(args: argparse.Namespace, client: MaybeAIClient, targ
 def run_sync(
     args: argparse.Namespace,
     repo_root: Path,
-    *,
-    recalculate: bool = True,
 ) -> MaybeAIClient | None:
     requested_days = resolve_requested_days(args)
     skip_sheet_write = bool(getattr(args, "skip_sheet_write", False))
@@ -2207,8 +2122,6 @@ def run_sync(
         ensure_headers(args, client, target)
         write_sheet_records(client, target, display_records, args)
         verify_written_days(client, target, args, display_records, fetched_display_days)
-    if recalculate:
-        recalculate_traffic_worksheets(args, client)
     print(
         f"[{args.store}] Store completed: fetched_days={len(missing_days)}, skipped_days={len(skipped_days)}, "
         f"adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(display_records)}."
@@ -2291,21 +2204,13 @@ def run_configured_stores(
     configs: list[dict[str, Any]],
     repo_root: Path,
 ) -> None:
-    """Write all configured stores first, then recalculate downstream sheets once."""
+    """Write all configured stores sequentially; recalculation runs separately."""
     print(f"Running SHEIN daily traffic for {len(configs)} configured stores.")
-    write_client: MaybeAIClient | None = None
-    write_args: argparse.Namespace | None = None
     for index, config in enumerate(configs, start=1):
         scoped_args = args_for_store_config(args, config)
         print(f"=== configured store {index}/{len(configs)}: store={scoped_args.store}, profile={scoped_args.profile} ===")
-        store_client = run_sync(scoped_args, repo_root, recalculate=False)
-        if store_client is not None:
-            write_client = store_client
-            write_args = scoped_args
+        run_sync(scoped_args, repo_root)
         print(f"=== configured store completed {progress_label(index, len(configs))}: store={scoped_args.store} ===")
-    if write_client is not None and write_args is not None:
-        print("All configured stores written; recalculating traffic worksheets once.")
-        recalculate_traffic_worksheets(write_args, write_client)
 
 
 def main() -> int:

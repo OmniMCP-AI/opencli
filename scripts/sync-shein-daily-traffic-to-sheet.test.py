@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 import maybeai_base_sync as base_sync
+import recalculate_shein_daily_traffic_formulas as recalc
 
 
 MODULE_PATH = Path(__file__).with_name("sync-shein-daily-traffic-to-sheet.py")
@@ -42,8 +43,8 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
                 "maybeai_api_retry_delay_seconds": 0,
             },
         )()
-        with mock.patch.object(sync, "MaybeAIClient", return_value=formula_client) as client_ctor:
-            result = sync.recalculate_traffic_worksheets(args, type("Client", (), {"token": "test-token"})())
+        with mock.patch.object(recalc, "MaybeAIClient", return_value=formula_client) as client_ctor:
+            result = recalc.recalculate_traffic_worksheets(args, type("Client", (), {"token": "test-token"})())
 
         self.assertEqual(len(result), 6)
         self.assertEqual([payload["worksheet_name"] for _, payload in formula_client.calls], [
@@ -55,8 +56,8 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "SKC区域运费当月",
         ])
         self.assertTrue(all(path == "/api/v1/excel/recalculate_formulas" for path, _ in formula_client.calls))
-        self.assertEqual(formula_client.timeouts, [sync.DEFAULT_MAYBEAI_API_TIMEOUT] * 6)
-        self.assertEqual(client_ctor.call_args.args[:2], (sync.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
+        self.assertEqual(formula_client.timeouts, [recalc.DEFAULT_MAYBEAI_API_TIMEOUT] * 6)
+        self.assertEqual(client_ctor.call_args.args[:2], (recalc.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
         self.assertEqual(formula_client.calls[0][1], {
             "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
             "clear_cache": False,
@@ -168,8 +169,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
              mock.patch.object(sync.base_sync, "read_snapshot", return_value=Snapshot()), \
              mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"date": "2026-08-06", "skc": "store3-skc"}]), \
              mock.patch.object(sync, "write_resolved_target", side_effect=lambda _client, _target, _snapshot, records, _args: written_records.extend(records) or {"success": True}), \
-             mock.patch.object(sync, "verify_base_written_days"), \
-             mock.patch.object(sync, "recalculate_traffic_worksheets"):
+             mock.patch.object(sync, "verify_base_written_days"):
             sync.run_sync(args, Path("."))
 
         self.assertEqual(
@@ -812,7 +812,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(scoped.sheet_display_days, 14)
         self.assertEqual(args.store, "店3")
 
-    def test_configured_stores_recalculate_once_after_all_writes(self) -> None:
+    def test_configured_stores_runs_each_store_without_recalculate(self) -> None:
         base_args = object()
         scoped_args = [
             type("Args", (), {"store": f"店{index}", "profile": f"profile{index}"})()
@@ -821,13 +821,11 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         clients = [object(), object(), object()]
 
         with mock.patch.object(sync, "args_for_store_config", side_effect=scoped_args), \
-             mock.patch.object(sync, "run_sync", side_effect=clients) as run_sync, \
-             mock.patch.object(sync, "recalculate_traffic_worksheets") as recalculate:
+             mock.patch.object(sync, "run_sync", side_effect=clients) as run_sync:
             sync.run_configured_stores(base_args, [{}, {}, {}], Path("."))
 
         self.assertEqual(run_sync.call_count, 3)
-        self.assertTrue(all(call.kwargs == {"recalculate": False} for call in run_sync.call_args_list))
-        recalculate.assert_called_once_with(scoped_args[-1], clients[-1])
+        self.assertEqual([call.args[0] for call in run_sync.call_args_list], scoped_args)
 
     def test_command_line_sheet_display_days_overrides_store_config_default(self) -> None:
         args = type("Args", (), {

@@ -14,10 +14,10 @@ METADATA_PATH = "/api/v1/excel_v2/worksheet/metadata"
 # /excel prefix while metadata is registered only under /excel_v2.
 TABLE_READ_PATH = "/api/v1/excel/table/read"
 TABLE_REPLACE_PATH = "/api/v1/excel/table/record/replace"
-# Daily traffic Base tables can contain many historical rows. Read the full
-# working set in one request in the normal case; pagination remains available
-# for tables larger than this limit.
-TABLE_READ_PAGE_SIZE = 100000
+# The Base table/read API currently caps responses at 1,000 records even when a
+# larger limit is requested. Keep the request size at that cap so missing
+# has_more markers still allow deterministic pagination.
+TABLE_READ_PAGE_SIZE = 1000
 
 
 class PostClient(Protocol):

@@ -18,6 +18,7 @@ TABLE_REPLACE_PATH = "/api/v1/excel/table/record/replace"
 # larger limit is requested. Keep the request size at that cap so missing
 # has_more markers still allow deterministic pagination.
 TABLE_READ_PAGE_SIZE = 1000
+TABLE_SCHEMA_READ_LIMIT = 1
 
 
 class PostClient(Protocol):
@@ -188,6 +189,37 @@ def read_snapshot(client: PostClient, target: Target) -> Snapshot:
     if fields is None or revision is None:
         raise BaseSyncError("Base table/read returned no table snapshot")
     return Snapshot(target=target, revision=revision, fields=fields, rows=rows)
+
+
+def read_schema_snapshot(client: PostClient, target: Target) -> Snapshot:
+    """Read only the schema and revision needed for a full record replacement."""
+    if target.engine != "base" or not target.table_id:
+        raise BaseSyncError("read_schema_snapshot requires a resolved Base target")
+    response = _require_success(
+        client.post(
+            TABLE_READ_PATH,
+            {
+                "document_id": target.document_id,
+                "gid": target.gid,
+                "table_id": target.table_id,
+                "worksheet_name": target.worksheet_name,
+                "limit": TABLE_SCHEMA_READ_LIMIT,
+                "offset": 0,
+            },
+            timeout=30,
+        ),
+        TABLE_READ_PATH,
+    )
+    table = _table_response(response)
+    revision = _integer(table.get("revision"))
+    if revision is None:
+        raise BaseSyncError("Base table/read did not return revision")
+    return Snapshot(
+        target=target,
+        revision=revision,
+        fields=_fields_from_response(table),
+        rows=(),
+    )
 
 
 def replace_snapshot(

@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import maybeai_base_sync as base_sync
+
 
 MODULE_PATH = Path(__file__).with_name("sync-shein-activity-to-sheet.py")
 SPEC = importlib.util.spec_from_file_location("sync_shein_activity_to_sheet", MODULE_PATH)
@@ -19,6 +21,95 @@ SPEC.loader.exec_module(sync)
 
 
 class SheinActivitySyncTests(unittest.TestCase):
+    def base_target(self) -> base_sync.Target:
+        return base_sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-activity?gid=40",
+            document_id="doc-activity",
+            gid=40,
+            worksheet_name="活动数据",
+            engine="base",
+            table_id="tbl_activity",
+        )
+
+    def sheet_target(self) -> base_sync.Target:
+        return base_sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-activity?gid=40",
+            document_id="doc-activity",
+            gid=40,
+            worksheet_name="活动数据ETL",
+            engine="sheet",
+            table_id=None,
+        )
+
+    def test_base_write_replaces_current_crawl_records_without_merging(self) -> None:
+        class Snapshot:
+            revision = 12
+            fields = [
+                base_sync.Field(f"fld_{index}", header, "text")
+                for index, header in enumerate(sync.SHEET_HEADERS)
+            ]
+
+            def records_from_rows(self, rows):
+                self.rows = rows
+                return [{"fld_activity_name": row["活动名称"]} for row in rows]
+
+        snapshot = Snapshot()
+        client = object()
+        args = argparse.Namespace(ensure_headers=False)
+        records = [
+            {"店铺": "店3", "活动名称": "new-a"},
+            {"店铺": "店3", "活动名称": "new-b"},
+        ]
+
+        with mock.patch.object(sync.base_sync, "read_schema_snapshot", return_value=snapshot), \
+             mock.patch.object(sync.base_sync, "replace_snapshot", return_value={"success": True, "revision": 13}) as replace_snapshot:
+            sync.write_base_records(client, self.base_target(), records, args)
+
+        self.assertEqual([row["活动名称"] for row in snapshot.rows], ["new-a", "new-b"])
+        replace_snapshot.assert_called_once_with(
+            client,
+            snapshot,
+            [{"fld_activity_name": "new-a"}, {"fld_activity_name": "new-b"}],
+        )
+
+    def test_base_write_rejects_sheet_only_header_mutation(self) -> None:
+        args = argparse.Namespace(ensure_headers=True)
+        with self.assertRaisesRegex(sync.SyncError, "Sheet-only"):
+            sync.write_base_records(object(), self.base_target(), [], args)
+
+    def test_base_run_does_not_read_or_merge_existing_worksheet_rows(self) -> None:
+        args = argparse.Namespace(
+            store="店3",
+            profile="profile3",
+            sheet_url=self.base_target().uri,
+            worksheet_name=None,
+            dry_run=False,
+            skip_sheet_write=False,
+            skip_existing_days=False,
+            raw_db=False,
+            etl_source="fresh",
+            clear_worksheet_data=False,
+            ensure_headers=False,
+        )
+        written_records: list[dict] = []
+
+        with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-08-25"]), \
+             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+             mock.patch.object(sync.base_sync, "resolve_target", return_value=self.base_target()), \
+             mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{
+                 "snapshot_date": "2026-08-25",
+                 "activity_name": "fresh-only",
+                 "skc": "skc-fresh",
+             }]), \
+             mock.patch.object(sync, "read_sheet_records") as read_sheet_records, \
+             mock.patch.object(sync, "write_sheet_records") as write_sheet_records, \
+             mock.patch.object(sync, "write_base_records", side_effect=lambda _client, _target, records, _args: written_records.extend(records)):
+            sync.run_sync(args, Path("."))
+
+        read_sheet_records.assert_not_called()
+        write_sheet_records.assert_not_called()
+        self.assertEqual([record["活动名称"] for record in written_records], ["fresh-only"])
+
     def test_sheet_headers_match_legacy_activity_output(self) -> None:
         self.assertEqual(sync.SHEET_HEADERS, [
             "店铺",
@@ -298,6 +389,7 @@ class SheinActivitySyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync.base_sync, "resolve_target", return_value=self.sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "活动数据ETL")), \
             mock.patch.object(sync, "default_yesterday", return_value="2026-07-04"), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]) as read_raw, \
@@ -338,6 +430,7 @@ class SheinActivitySyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-29", "2026-07-30"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync.base_sync, "resolve_target", return_value=self.sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "活动数据ETL")), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, stale_display_response]), \
             mock.patch.object(sync, "fetch_and_save_shein_rows", return_value=[{"snapshot_date": "2026-07-30", "activity_name": "fresh-30", "skc": "skc-30"}]), \
@@ -374,6 +467,7 @@ class SheinActivitySyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-30"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync.base_sync, "resolve_target", return_value=self.sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "活动数据ETL")), \
             mock.patch.object(sync, "read_sheet_records", return_value=existing), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]), \
@@ -411,6 +505,7 @@ class SheinActivitySyncTests(unittest.TestCase):
 
         with mock.patch.object(sync, "resolve_requested_days", return_value=["2026-07-30"]), \
             mock.patch.object(sync, "build_maybeai_client", return_value=object()), \
+            mock.patch.object(sync.base_sync, "resolve_target", return_value=self.sheet_target()), \
             mock.patch.object(sync, "build_sheet_target", return_value=({"uri": "etl-sheet"}, "活动数据ETL")), \
             mock.patch.object(sync, "read_sheet_records", return_value=existing), \
             mock.patch.object(sync, "read_raw_api_snapshot_response", side_effect=[plan_response, display_response]), \

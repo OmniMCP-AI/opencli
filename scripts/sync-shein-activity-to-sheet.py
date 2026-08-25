@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import maybeai_base_sync as base_sync
+
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=40"
 DEFAULT_RAW_DB_URI = "https://www.maybe.ai/docs/spreadsheets/d/<raw-activity-doc-id>?gid=0"
@@ -1146,6 +1148,46 @@ def write_sheet_records(client: Any, target: dict[str, str], records: list[dict[
     }, ensure_ascii=False))
 
 
+def write_base_records(
+    client: Any,
+    target: base_sync.Target,
+    records: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> None:
+    """Replace a Base activity table with this crawl's ETL projection."""
+    try:
+        base_sync.require_base_compatible_options(
+            target,
+            read_range=None,
+            ensure_headers=bool(getattr(args, "ensure_headers", False)),
+        )
+        snapshot = base_sync.read_schema_snapshot(client, target)
+        field_names = {field.name for field in snapshot.fields}
+        missing_fields = sorted(set(SHEET_HEADERS) - field_names)
+        if missing_fields:
+            raise base_sync.BaseSyncError(
+                "Base activity target is missing required fields: "
+                + ", ".join(missing_fields)
+            )
+        writable_records = snapshot.records_from_rows([
+            {header: record.get(header, "") for header in SHEET_HEADERS}
+            for record in records
+        ])
+        result = base_sync.replace_snapshot(client, snapshot, writable_records)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    print("Write result:", json.dumps({
+        "spreadsheet_url": target.uri,
+        "worksheet": target.worksheet_name,
+        "engine": "base",
+        "table_id": target.table_id,
+        "expected_revision": snapshot.revision,
+        "revision": result.get("revision"),
+        "rows": len(records),
+        "write_api": "table_record_replace",
+    }, ensure_ascii=False))
+
+
 def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     requested_days = resolve_requested_days(args)
     skip_sheet_write = bool(getattr(args, "skip_sheet_write", False))
@@ -1170,17 +1212,34 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     )
     client = build_maybeai_client(args) if needs_client else None
     target = None
+    base_target: base_sync.Target | None = None
     existing_records: list[dict[str, Any]] = []
     if client is not None and not skip_sheet_write:
-        target, _worksheet_name = build_sheet_target(args, client)
-        print(
-            "MaybeAI activity sheet read/write target: "
-            f"uri={target['uri']}"
-            f"{f', worksheet={_worksheet_name}' if _worksheet_name else ''}"
-        )
-        if not getattr(args, "clear_worksheet_data", False):
-            existing_records = read_sheet_records(client, target)
-            print(f"Loaded {len(existing_records)} existing activity sheet rows.")
+        try:
+            resolved_target = base_sync.resolve_target(
+                client,
+                getattr(args, "sheet_url", DEFAULT_SHEET_URL),
+                getattr(args, "worksheet_name", None),
+            )
+        except base_sync.BaseSyncError as error:
+            raise SyncError(str(error)) from error
+        if resolved_target.engine == "base":
+            base_target = resolved_target
+            print(
+                "MaybeAI activity Base read/write target: "
+                f"document_id={base_target.document_id}, gid={base_target.gid}, "
+                f"table_id={base_target.table_id}, worksheet={base_target.worksheet_name}"
+            )
+        else:
+            target, _worksheet_name = build_sheet_target(args, client)
+            print(
+                "MaybeAI activity sheet read/write target: "
+                f"uri={target['uri']}"
+                f"{f', worksheet={_worksheet_name}' if _worksheet_name else ''}"
+            )
+            if not getattr(args, "clear_worksheet_data", False):
+                existing_records = read_sheet_records(client, target)
+                print(f"Loaded {len(existing_records)} existing activity sheet rows.")
 
     plan_response: dict[str, Any] = {}
     plan_raw_rows: list[dict[str, Any]] = []
@@ -1253,20 +1312,25 @@ def run_sync(args: argparse.Namespace, repo_root: Path) -> None:
     if getattr(args, "dry_run", False):
         print(f"Dry run enabled; etl_rows={len(records)}")
         return
-    if not records and getattr(args, "etl_source", "fresh") != "raw-api":
+    if base_target is None and not records and getattr(args, "etl_source", "fresh") != "raw-api":
         print("No SHEIN activity ETL rows; skipping Sheet write.")
         return
-    assert client is not None and target is not None
-    print(f"[{getattr(args, 'store', DEFAULT_STORE)}] Step 6/6: writing ETL sheet.")
-    ensure_headers(args, client, target)
-    if getattr(args, "clear_worksheet_data", False):
-        merged = records
-    elif getattr(args, "etl_source", "fresh") == "raw-api":
-        merged = merge_records_for_store_refresh(existing_records, records, getattr(args, "store", DEFAULT_STORE))
+    assert client is not None
+    print(f"[{getattr(args, 'store', DEFAULT_STORE)}] Step 6/6: writing ETL target.")
+    if base_target is not None:
+        write_base_records(client, base_target, records, args)
+        sheet_records = records
     else:
-        merged = merge_records_by_unique_key(existing_records, records)
-    sheet_records = sort_records(merged)
-    write_sheet_records(client, target, sheet_records, args)
+        assert target is not None
+        ensure_headers(args, client, target)
+        if getattr(args, "clear_worksheet_data", False):
+            merged = records
+        elif getattr(args, "etl_source", "fresh") == "raw-api":
+            merged = merge_records_for_store_refresh(existing_records, records, getattr(args, "store", DEFAULT_STORE))
+        else:
+            merged = merge_records_by_unique_key(existing_records, records)
+        sheet_records = sort_records(merged)
+        write_sheet_records(client, target, sheet_records, args)
     print(
         f"[{getattr(args, 'store', DEFAULT_STORE)}] Store completed: fetched_days={len(missing_days)}, "
         f"skipped_days={len(skipped_days)}, adapter_rows={len(adapter_rows)}, etl_rows={len(records)}, sheet_rows={len(sheet_records)}."

@@ -197,6 +197,34 @@ class BaseSyncTests(unittest.TestCase):
         self.assertEqual([row["店铺"] for row in snapshot.rows], ["店1", "店2", "店3"])
         self.assertEqual([payload["offset"] for _, payload in client.calls], [0, 2])
 
+    def test_read_schema_snapshot_reads_one_record_without_loading_existing_rows(self) -> None:
+        target = sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-traffic?gid=41",
+            document_id="doc-traffic",
+            gid=41,
+            worksheet_name="每日流量",
+            engine="base",
+            table_id="tbl_traffic",
+        )
+        client = FakeClient({
+            "/api/v1/excel/table/read": [
+                base_table_page(
+                    revision=7,
+                    has_more=True,
+                    records=[{"record_id": "rec-1", "fields": {"fld_store": "店1"}}],
+                )
+            ]
+        })
+
+        snapshot = sync.read_schema_snapshot(client, target)
+
+        self.assertEqual(snapshot.revision, 7)
+        self.assertEqual(snapshot.rows, ())
+        self.assertEqual(
+            client.calls[0][1]["limit"],
+            sync.TABLE_SCHEMA_READ_LIMIT,
+        )
+
     def test_snapshot_rejects_sheet_options_unknown_headers_and_formula_input(self) -> None:
         target = sync.Target(
             uri="https://www.maybe.ai/docs/spreadsheets/d/doc-traffic?gid=41",

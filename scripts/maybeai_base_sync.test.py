@@ -147,7 +147,7 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 100000,
+                    "limit": sync.TABLE_READ_PAGE_SIZE,
                     "offset": 0,
                 },
                 {
@@ -155,7 +155,7 @@ class BaseSyncTests(unittest.TestCase):
                     "gid": 41,
                     "table_id": "tbl_traffic",
                     "worksheet_name": "每日流量",
-                    "limit": 100000,
+                    "limit": sync.TABLE_READ_PAGE_SIZE,
                     "offset": 1,
                 },
             ],
@@ -230,6 +230,31 @@ class BaseSyncTests(unittest.TestCase):
         self.assertEqual(
             snapshot.records_from_rows([{"店铺": "店3", "订单数": "9", "总额": ""}]),
             [{"fld_store": "店3", "fld_orders": 9}],
+        )
+
+    def test_snapshot_writes_blank_typed_fields_as_null(self) -> None:
+        target = sync.Target(
+            uri="https://www.maybe.ai/docs/spreadsheets/d/doc-traffic?gid=41",
+            document_id="doc-traffic",
+            gid=41,
+            worksheet_name="每日流量",
+            engine="base",
+            table_id="tbl_traffic",
+        )
+        snapshot = sync.Snapshot(
+            target=target,
+            revision=7,
+            fields=(
+                sync.Field("fld_score", "物流评分", "number"),
+                sync.Field("fld_ready", "已完成", "boolean"),
+                sync.Field("fld_note", "备注", "text"),
+            ),
+            rows=(),
+        )
+
+        self.assertEqual(
+            snapshot.records_from_rows([{"物流评分": "", "已完成": "", "备注": ""}]),
+            [{"fld_score": None, "fld_ready": None, "fld_note": ""}],
         )
 
     def test_replace_snapshot_forwards_revision_without_sheet_payload(self) -> None:

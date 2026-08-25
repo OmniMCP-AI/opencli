@@ -23,6 +23,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import maybeai_base_sync as base_sync
+
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69d8a907505279d17a357c87?gid=9"
 DEFAULT_MAYBEAI_BASE_URL = "https://play-be.omnimcp.ai"
@@ -609,8 +611,95 @@ def read_sheet_records(client: MaybeAIClient, target: dict[str, Any], read_range
     ]
 
 
-def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
-    client = build_maybeai_client(args)
+def _base_store_records(
+    records: list[dict[str, Any]],
+    store: str,
+    has_store_field: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split Base rows while supporting dedicated per-store tables."""
+    normalized_records = []
+    for record in records:
+        normalized = normalize_sheet_record(record)
+        if is_blank_record(normalized):
+            continue
+        if not has_store_field:
+            normalized["店铺"] = store
+        normalized_records.append(normalized)
+    if not has_store_field:
+        return [], normalized_records
+    return (
+        [record for record in normalized_records if str(record.get("店铺", "")).strip() != store],
+        [record for record in normalized_records if str(record.get("店铺", "")).strip() == store],
+    )
+
+
+def _write_base_sheet(
+    args: argparse.Namespace,
+    rows: list[dict[str, Any]],
+    client: MaybeAIClient,
+    target: base_sync.Target,
+) -> None:
+    try:
+        base_sync.require_base_compatible_options(
+            target,
+            read_range=args.read_range,
+            ensure_headers=args.ensure_headers,
+        )
+        snapshot = base_sync.read_snapshot(client, target)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+
+    field_names = {field.name for field in snapshot.fields}
+    has_store_field = "店铺" in field_names
+    required_fields = set(SHEET_HEADERS) - ({"店铺"} if not has_store_field else set())
+    missing_fields = sorted(required_fields - field_names)
+    if missing_fields:
+        raise SyncError(
+            "Base feedback target is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    other_store_records, existing_store_records = _base_store_records(
+        list(snapshot.rows), args.store, has_store_field
+    )
+    current_store_records = rows_to_records(rows, args.store)
+    merged_store_records = merge_records_by_unique_key(existing_store_records, current_store_records)
+    merged_records = sort_records_by_comment_time_desc([*other_store_records, *merged_store_records])
+    writable_rows = [
+        {header: value for header, value in record.items() if header in field_names}
+        for record in merged_records
+    ]
+    try:
+        writable_records = snapshot.records_from_rows(writable_rows)
+        write_result = base_sync.replace_snapshot(client, snapshot, writable_records)
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+
+    print(
+        "Done:",
+        json.dumps(
+            {
+                "spreadsheet_url": target.uri,
+                "worksheet": target.worksheet_name,
+                "engine": "base",
+                "table_id": target.table_id,
+                "expected_revision": snapshot.revision,
+                "revision": write_result.get("revision"),
+                "rows": len(merged_records),
+                "fresh_store_rows": len(current_store_records),
+                "merged_store_rows": len(merged_store_records),
+                "preserved_other_store_rows": len(other_store_records),
+                "dedicated_store_table": not has_store_field,
+                "unique_key": UNIQUE_KEY_FIELDS,
+                "sort": f"{COMMENT_TIME_FIELD} desc",
+                "write_api": "table_record_replace",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
+def _write_sheet_legacy(args: argparse.Namespace, rows: list[dict[str, Any]], client: MaybeAIClient) -> None:
     target, worksheet_name = build_sheet_target(args, client)
     print(
         "MaybeAI feedback sheet read/write target: "
@@ -663,6 +752,22 @@ def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
             ensure_ascii=False,
         ),
     )
+
+
+def write_sheet(args: argparse.Namespace, rows: list[dict[str, Any]]) -> None:
+    client = build_maybeai_client(args)
+    try:
+        resolved_target = base_sync.resolve_target(
+            client,
+            args.sheet_url,
+            args.worksheet_name,
+        )
+    except base_sync.BaseSyncError as error:
+        raise SyncError(str(error)) from error
+    if resolved_target.engine == "base":
+        _write_base_sheet(args, rows, client, resolved_target)
+        return
+    _write_sheet_legacy(args, rows, client)
 
 
 def build_parser() -> argparse.ArgumentParser:

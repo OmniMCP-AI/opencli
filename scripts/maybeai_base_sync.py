@@ -321,6 +321,8 @@ def _coerce_value(field: Field, value: Any) -> Any:
     logical_type = field.logical_type.strip().lower()
     if value is None:
         return None
+    if _is_blank(value) and logical_type not in {"text", "string"}:
+        return None
     if logical_type in {"integer", "int"}:
         return _coerce_integer(field.name, value)
     if logical_type in {"number", "float", "double", "decimal", "currency", "percent"}:

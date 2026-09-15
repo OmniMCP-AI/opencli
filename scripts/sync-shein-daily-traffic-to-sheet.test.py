@@ -46,17 +46,18 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         with mock.patch.object(recalc, "MaybeAIClient", return_value=formula_client) as client_ctor:
             result = recalc.recalculate_traffic_worksheets(args, type("Client", (), {"token": "test-token"})())
 
-        self.assertEqual(len(result), 6)
-        self.assertEqual([payload["worksheet_name"] for _, payload in formula_client.calls], [
+        self.assertEqual(len(result), 7)
+        self.assertEqual([payload.get("worksheet_name") for _, payload in formula_client.calls], [
             "产品_SKU日事实表",
             "产品_日趋势汇总表",
             "产品_类目周期明细表",
             "产品_生命周期周期汇总表",
             "产品_预设周期汇总表",
             "SKC区域运费当月",
+            "SKC当月点击加购率",
         ])
         self.assertTrue(all(path == "/api/v1/excel/recalculate_formulas" for path, _ in formula_client.calls))
-        self.assertEqual(formula_client.timeouts, [recalc.DEFAULT_MAYBEAI_API_TIMEOUT] * 6)
+        self.assertEqual(formula_client.timeouts, [recalc.DEFAULT_MAYBEAI_API_TIMEOUT] * 7)
         self.assertEqual(client_ctor.call_args.args[:2], (recalc.DEFAULT_MAYBEAI_BASE_URL, "test-token"))
         self.assertEqual(formula_client.calls[0][1], {
             "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=91",
@@ -67,10 +68,10 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "worksheet_name": "产品_SKU日事实表",
         })
         self.assertEqual(formula_client.calls[-1][1], {
-            "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=123",
+            "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=127",
             "clear_cache": False,
             "sync_save": True,
-            "worksheet_name": "SKC区域运费当月",
+            "worksheet_name": "SKC当月点击加购率",
         })
 
     def sheet_values(self, rows: list[dict]) -> list[list]:
@@ -351,6 +352,32 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
 
         self.assertEqual(saved, [("2026-07-01", [{"date": "2026-07-01", "skc": "skc-2026-07-01"}])])
 
+    def test_empty_cli_response_is_retried_and_not_returned_as_data(self) -> None:
+        args = type("Args", (), {
+            "area_cd": None,
+            "country_site": None,
+            "page_size": None,
+            "limit": None,
+            "max_pages": None,
+            "opencli_timeout": None,
+            "request_timeout": None,
+            "api_retry_attempts": None,
+            "api_retry_delay_ms": None,
+            "shein_username": None,
+            "shein_password": None,
+            "attempts": 2,
+            "cli_timeout": 30,
+            "retry_delay_seconds": 0,
+        })()
+        empty = mock.Mock(returncode=0, stdout="[]", stderr="")
+        populated = mock.Mock(returncode=0, stdout='[{"date":"2026-09-03","skc":"skc-1"}]', stderr="")
+
+        with mock.patch.object(sync, "run_command", side_effect=[empty, populated]) as run:
+            rows = sync.fetch_shein_rows_for_day(args, Path("."), "2026-09-03", ["opencli"])
+
+        self.assertEqual(rows, [{"date": "2026-09-03", "skc": "skc-1"}])
+        self.assertEqual(run.call_count, 2)
+
     def test_raw_api_mode_saves_raw_rows_when_raw_db_is_enabled(self) -> None:
         args = type("Args", (), {
             "raw_db": True,
@@ -531,6 +558,9 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
             "multicolor_flag": "false",
             "goods_uv_idx": 10,
             "eps_uv_idx": 40,
+            "eps_gds_ctr_idx": 0.4,
+            "raw_json_eps_gds_ctr_idx": 0.4,
+            "gds_cart_ctr_idx": 0.3,
             "pay_order_cnt": "",
             "sale_cnt": "",
             "total_comment_cnt": 11,
@@ -549,6 +579,7 @@ class SheinDailyTrafficSyncTests(unittest.TestCase):
         self.assertEqual(record["商品"], "Kitchen Rack")
         self.assertEqual(record["商品当前状态"], "在售")
         self.assertEqual(record["点击率"], 0.25)
+        self.assertEqual(record["转化率 (加入购物车率)"], 0.3)
         self.assertEqual(record["件数（已下单）"], 0)
         self.assertEqual(record["件数（已确认订单）"], 0)
         self.assertEqual(record["商品评价数"], 11)

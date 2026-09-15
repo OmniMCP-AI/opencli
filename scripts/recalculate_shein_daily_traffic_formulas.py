@@ -75,6 +75,12 @@ TRAFFIC_RECALCULATE_WORKSHEETS = [
         "sync_save": True,
         "worksheet_name": "SKC区域运费当月",
     },
+    {
+        "uri": "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=127",
+        "clear_cache": False,
+        "sync_save": True,
+        "worksheet_name": "SKC当月点击加购率",
+    },
 ]
 
 
@@ -173,7 +179,7 @@ def recalculate_worksheets(
     results: list[dict[str, Any]] = []
     total = len(TRAFFIC_RECALCULATE_WORKSHEETS)
     for index, payload in enumerate(TRAFFIC_RECALCULATE_WORKSHEETS, start=1):
-        worksheet_name = payload["worksheet_name"]
+        worksheet_name = payload.get("worksheet_name") or payload.get("uri", "worksheet")
         print(f"[{store}] Step 7/7: recalculating worksheet {index}/{total}: {worksheet_name}.")
         result = recalculate_client.post(
             "/api/v1/excel/recalculate_formulas",

@@ -45,6 +45,7 @@ DEFAULT_RAW_DB_READ_TOOL_NAME = "read_recent_worksheet_snapshots"
 DEFAULT_RAW_DB_URI = "https://www.maybe.ai/docs/spreadsheets/d/6a69d73b0e55e966f026dee3?gid=0"
 DEFAULT_RAW_DB_WORKSHEET_SUFFIX = "每日流量"
 DEFAULT_RAW_READ_DAYS = 30
+DEFAULT_RAW_DB_READ_ATTEMPTS = 4  # initial request plus three retries
 SHEET_READ_CHUNK_ROWS = 10000
 WORKSHEET_DIMENSIONS_PATH = "/api/v1/excel_v2/worksheet/dimensions"
 
@@ -67,6 +68,7 @@ RAW_SHEET_HEADERS = [
     "multicolor_flag",
     "goods_uv_idx",
     "eps_uv_idx",
+    "eps_gds_ctr_idx",
     "bounce_uv_idx",
     "bounce_rate",
     "search_click_cnt",
@@ -623,7 +625,18 @@ def fetch_shein_rows_for_day(args: argparse.Namespace, repo_root: Path, day: str
         )
         result = run_command(daily_cmd, repo_root, args.cli_timeout)
         if result.returncode == 0:
-            return extract_json_array(result.stdout)
+            rows = extract_json_array(result.stdout)
+            if rows:
+                return rows
+
+            # An empty response is not safe to persist: a transient SHEIN/API
+            # response would otherwise create an empty snapshot and suppress
+            # that date from all later raw-DB ETL runs.
+            last_output = "SHEIN daily traffic CLI returned an empty JSON array"
+            print(f"SHEIN daily traffic CLI returned no rows for {day}; retrying...")
+            if attempt < args.attempts and args.retry_delay_seconds > 0:
+                time.sleep(args.retry_delay_seconds)
+            continue
 
         last_output = command_output(result)
         auth_required = looks_auth_required(last_output)
@@ -812,6 +825,8 @@ def adapter_row_from_raw_sources(row: dict[str, Any]) -> dict[str, Any]:
         "multicolor_flag": first_nonblank(row, "multicolor_flag", "是否多色") or raw.get("multicolorFlag", ""),
         "goods_uv_idx": first_nonblank(row, "goods_uv_idx", "商品访客（访问）") or raw.get("goodsUvIdx", ""),
         "eps_uv_idx": first_nonblank(row, "eps_uv_idx", "商品页面访客") or raw.get("epsUvIdx", ""),
+        "eps_gds_ctr_idx": first_nonblank(row, "eps_gds_ctr_idx", "点击率") or raw.get("epsGdsCtrIdx", ""),
+        "raw_json_eps_gds_ctr_idx": raw.get("epsGdsCtrIdx", ""),
         "bounce_uv_idx": first_nonblank(row, "bounce_uv_idx", "跳出商品页面的访客数") or raw.get("bounceUvIdx", ""),
         "bounce_rate": first_nonblank(row, "bounce_rate", "商品跳出率") or raw.get("bounceRate", ""),
         "search_click_cnt": first_nonblank(row, "search_click_cnt", "搜索点击数") or raw.get("searchClickCnt", ""),
@@ -1511,7 +1526,14 @@ def read_raw_api_snapshot_response(
     resolved_read_days = effective_raw_read_days(args, read_days=read_days)
     payload = build_read_recent_worksheet_snapshots_payload(args, uri=uri, worksheet_name=worksheet_name, read_days=resolved_read_days)
     print(f"Reading raw SHEIN daily traffic worksheet snapshots for {purpose}: uri={uri}, worksheet={worksheet_name}, last_n_days={resolved_read_days}")
-    return client.post(args.raw_db_read_path, payload)
+    original_attempts = getattr(client, "attempts", None)
+    if original_attempts is not None:
+        client.attempts = max(int(getattr(args, "raw_db_read_attempts", DEFAULT_RAW_DB_READ_ATTEMPTS)), 1)
+    try:
+        return client.post(args.raw_db_read_path, payload)
+    finally:
+        if original_attempts is not None:
+            client.attempts = original_attempts
 
 
 def read_raw_api_rows(args: argparse.Namespace, client: "MaybeAIClient", requested_days: list[str], response: Any = None) -> list[dict[str, Any]]:
@@ -1871,16 +1893,23 @@ def verify_base_written_days(
 ) -> None:
     if not fetched_days:
         return
-    try:
-        visible_rows = base_sync.read_snapshot(client, target).rows
-    except base_sync.BaseSyncError as error:
-        raise SyncError(str(error)) from error
-    visible_keys = {day_skip_key(record) for record in visible_rows}
-    missing = [
-        day
-        for day in fetched_days
-        if (args.store, day) not in visible_keys
-    ]
+    missing: list[str] = []
+    for attempt in range(1, 3):
+        try:
+            visible_rows = base_sync.read_snapshot(client, target).rows
+        except base_sync.BaseSyncError as error:
+            raise SyncError(str(error)) from error
+        visible_keys = {day_skip_key(record) for record in visible_rows}
+        missing = [
+            day
+            for day in fetched_days
+            if (args.store, day) not in visible_keys
+        ]
+        if not missing:
+            break
+        if attempt == 1:
+            print(f"Base write verification pending; missing={missing}. Waiting 600s before retry...")
+            time.sleep(600)
     if missing:
         raise SyncError(f"Base write verification failed; fetched store/day rows not visible: {missing}")
     print(f"Verified fetched days are visible in Base table: {', '.join(fetched_days)}")
@@ -1947,6 +1976,7 @@ def run_sync(
     raw_snapshot_days: set[str] = set()
     existing_raw_rows: list[dict[str, Any]] = []
     plan_raw_rows: list[dict[str, Any]] = []
+    raw_snapshot_response: Any = None
 
     needs_sheet_target = not args.dry_run and not skip_sheet_write
     needs_client = (
@@ -2004,6 +2034,10 @@ def run_sync(
         )
 
     missing_days, skipped_days = compute_missing_days_from_existing_days(requested_days, raw_snapshot_days, args.skip_existing_days)
+    if getattr(args, "skip_fetch", False) and missing_days:
+        print(f"[{args.store}] Skip fetch enabled; treating missing raw DB days as skipped: {', '.join(missing_days)}")
+        skipped_days = skipped_days + missing_days
+        missing_days = []
     print(f"Date plan from raw DB: requested={len(requested_days)}, missing={len(missing_days)}, skipped={len(skipped_days)}")
     if skipped_days:
         print(f"Skipped existing raw DB days: {', '.join(skipped_days)}")
@@ -2026,13 +2060,20 @@ def run_sync(
         assert client is not None
         display_read_days = effective_raw_read_days(args)
         print(f"[{args.store}] Reading raw DB snapshots for Sheet ETL display; display_window_days={display_read_days}.")
-        display_snapshot_response = read_raw_api_snapshot_response(
-            args,
-            client,
-            requested_days,
-            read_days=display_read_days,
-            purpose="sheet ETL",
-        )
+        if raw_snapshot_response is not None and display_read_days >= len(requested_days):
+            # The crawl-plan response already contains the full requested
+            # window. Reusing it avoids a second large function-call response
+            # which can hang while streaming the same raw snapshots.
+            display_snapshot_response = raw_snapshot_response
+            print(f"[{args.store}] Reusing raw DB crawl-plan response for Sheet ETL display.")
+        else:
+            display_snapshot_response = read_raw_api_snapshot_response(
+                args,
+                client,
+                requested_days,
+                read_days=display_read_days,
+                purpose="sheet ETL",
+            )
         existing_raw_rows = read_raw_api_rows(args, client, requested_days, response=display_snapshot_response)
         display_raw_days = extract_raw_snapshot_days(display_snapshot_response)
         display_day_set = set(requested_days[-display_read_days:])
@@ -2169,11 +2210,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raw-db-worksheet-name", help="Worksheet name used as the raw MongoDB staging table. Defaults to <store><raw-db-worksheet-suffix>.")
     parser.add_argument("--raw-db-worksheet-suffix", default=DEFAULT_RAW_DB_WORKSHEET_SUFFIX, help=f"Worksheet suffix used when --raw-db-worksheet-name is omitted. Default: {DEFAULT_RAW_DB_WORKSHEET_SUFFIX}")
     parser.add_argument("--raw-db-read-path", default=DEFAULT_RAW_DB_READ_PATH, help=f"MaybeAI function_call API path used by --etl-source raw-api to load recent raw worksheet snapshots. Default: {DEFAULT_RAW_DB_READ_PATH}")
+    parser.add_argument("--raw-db-read-attempts", type=int, default=DEFAULT_RAW_DB_READ_ATTEMPTS, help="Total attempts for raw DB snapshot reads, including the initial request. Default: 4 (one initial request plus three retries).")
     parser.add_argument("--raw-read-days", type=int, default=DEFAULT_RAW_READ_DAYS, help=f"Final Sheet ETL raw API read window. Crawl skip planning uses the requested crawl window. Defaults to --sheet-display-days when set, otherwise {DEFAULT_RAW_READ_DAYS}.")
     parser.add_argument("--etl-source", choices=["fresh", "raw-api"], default="fresh", help="Use freshly crawled CLI rows or rows loaded back from the raw API for Sheet ETL. Default: fresh")
     parser.add_argument("--ensure-headers", action="store_true", help="Rewrite the header row with the script schema before writing data. Off by default.")
     parser.add_argument("--sheet-display-days", type=int, help="Only keep the most recent N days in the ETL sheet, ending at the latest date present in merged ETL records. Also defaults the final raw DB ETL read window. Raw DB crawl checks and saves still use the requested date range.")
     parser.add_argument("--skip-sheet-write", action="store_true", help="Fetch and optionally save raw DB rows, run ETL summary, and skip final ETL sheet merge/write. Off by default.")
+    parser.add_argument("--skip-fetch", action="store_true", help="Do not crawl SHEIN for missing raw DB days; write ETL from existing raw DB rows only. Off by default.")
     parser.add_argument("--clear-worksheet-data", action="store_true", help="Discard existing data rows before writing fetched rows. Headers are preserved.")
     parser.add_argument("--skip-existing-days", action=argparse.BooleanOptionalAction, default=True, help="Skip a whole day when the raw DB worksheet already has a snapshot for that date. Default: true")
     parser.add_argument("--opencli-cmd", default=DEFAULT_OPENCLI_CMD, help=f"Command used to invoke OpenCLI. Default: {DEFAULT_OPENCLI_CMD!r}")

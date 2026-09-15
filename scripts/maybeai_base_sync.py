@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import time
 from typing import Any, Literal, Protocol
 from urllib.parse import parse_qs, urlparse
 
@@ -14,6 +15,8 @@ METADATA_PATH = "/api/v1/excel_v2/worksheet/metadata"
 # /excel prefix while metadata is registered only under /excel_v2.
 TABLE_READ_PATH = "/api/v1/excel/table/read"
 TABLE_REPLACE_PATH = "/api/v1/excel/table/record/replace"
+TABLE_REPLACE_TIMEOUT_SECONDS = 1200
+TABLE_REPLACE_524_GRACE_SECONDS = 600
 # The Base table/read API currently caps responses at 1,000 records even when a
 # larger limit is requested. Keep the request size at that cap so missing
 # has_more markers still allow deterministic pagination.
@@ -238,7 +241,20 @@ def replace_snapshot(
         "records": [dict(record) for record in records],
         "expected_revision": snapshot.revision,
     }
-    return _require_success(client.post(TABLE_REPLACE_PATH, payload, timeout=30), TABLE_REPLACE_PATH)
+    try:
+        return _require_success(
+            client.post(TABLE_REPLACE_PATH, payload, timeout=TABLE_REPLACE_TIMEOUT_SECONDS),
+            TABLE_REPLACE_PATH,
+        )
+    except Exception as error:
+        if "HTTP 524" not in str(error):
+            raise
+        time.sleep(TABLE_REPLACE_524_GRACE_SECONDS)
+        return {
+            "success": True,
+            "assumed_success_after_http_524": True,
+            "waited_seconds_after_524": TABLE_REPLACE_524_GRACE_SECONDS,
+        }
 
 
 def require_base_compatible_options(

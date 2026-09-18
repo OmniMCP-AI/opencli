@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -21,6 +22,23 @@ SPEC.loader.exec_module(sync)
 
 
 class SheinDailyTrafficSyncTests(unittest.TestCase):
+    def test_maybeai_client_requests_and_decodes_gzip_response(self) -> None:
+        response = mock.MagicMock()
+        response.headers = {"Content-Encoding": "gzip"}
+        response.read.return_value = gzip.compress(b'{"success": true, "rows": 1}')
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+
+        with mock.patch.object(sync.urllib.request, "urlopen", return_value=response) as urlopen:
+            result = sync.MaybeAIClient("https://example.test", "test-token", attempts=1).post(
+                "/api/v1/tool/function_call",
+                {"app": "function_call"},
+            )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.headers.get("Accept-encoding"), "gzip, br")
+        self.assertEqual(result, {"success": True, "rows": 1})
+
     def test_recalculate_traffic_worksheets_posts_in_order_with_expected_payloads(self) -> None:
         class FormulaClient:
             def __init__(self) -> None:

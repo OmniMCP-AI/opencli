@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from datetime import datetime, timedelta
+import gzip
 import http.client
 import importlib.util
 import json
@@ -25,6 +26,11 @@ import urllib.parse
 import urllib.request
 
 import maybeai_base_sync as base_sync
+
+try:
+    import brotli
+except ImportError:
+    brotli = None
 
 
 DEFAULT_SHEET_URL = "https://www.maybe.ai/docs/spreadsheets/d/69b91dd6bf42f58633fdc53b?gid=41"
@@ -153,6 +159,27 @@ JSON_BLOB_FIELDS = {"每日流量明细JSON", "活动信息JSON", "权益活动J
 
 class SyncError(RuntimeError):
     pass
+
+
+def decode_http_response_body(response: Any) -> bytes:
+    body = response.read()
+    content_encoding = response.headers.get("Content-Encoding", "")
+    encodings = [value.strip().lower() for value in content_encoding.split(",") if value.strip()]
+
+    for encoding in reversed(encodings):
+        if encoding in {"identity"}:
+            continue
+        if encoding in {"gzip", "x-gzip"}:
+            body = gzip.decompress(body)
+            continue
+        if encoding == "br":
+            if brotli is None:
+                raise SyncError("MaybeAI API returned Brotli content, but the brotli Python package is not installed.")
+            body = brotli.decompress(body)
+            continue
+        raise SyncError(f"MaybeAI API returned unsupported Content-Encoding: {encoding}")
+
+    return body
 
 
 class StreamToLogger:
@@ -1561,13 +1588,15 @@ class MaybeAIClient:
                 headers={
                     "Authorization": f"Bearer {self.token}",
                     "Content-Type": "application/json",
+                    "Accept-Encoding": "gzip, br",
                 },
             )
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
-                    return json.loads(response.read().decode("utf-8", "replace"))
+                    body = decode_http_response_body(response)
+                    return json.loads(body.decode("utf-8", "replace"))
             except urllib.error.HTTPError as error:
-                body = error.read().decode("utf-8", "replace")
+                body = decode_http_response_body(error).decode("utf-8", "replace")
                 last_error = f"HTTP {error.code}:\n{body}"
                 if error.code not in {429, 500, 502, 503, 504} or attempt >= self.attempts:
                     raise SyncError(f"MaybeAI API {path} failed with {last_error}") from error
